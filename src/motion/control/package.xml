@@ -20,7 +20,6 @@
   <depend>yaml-cpp</depend>
   <depend>ament_index_cpp</depend>
   <depend>assets</depend>
-  <depend>hpipm_interface_ament</depend>
   <depend>eiquadprog</depend>
   <depend>pinocchio_interface</depend>
 

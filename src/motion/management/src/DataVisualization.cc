@@ -1,3 +1,8 @@
+/*
+负责将机器人状态、轨迹、足部位置等数据可视化，通过 ROS2 发布到 RViz 等工具中。
+
+*/
+
 #include "DataVisualization.h"
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <pinocchio/Orientation.h>

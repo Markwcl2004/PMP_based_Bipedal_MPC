@@ -1,6 +1,19 @@
 #include "gait/CycleTimer.h"
 #include <core/misc/NumericTraits.h>
 
+/*
+步态周期计时器，用于跟踪当前步态周期内的时间进度。
+
+innerLoop: 内部循环，更新当前周期时间。
+    控制循环的速率，使其保持在每秒 10000 次。
+    调整周期起始点，确保其始终处于当前时间之前，并且与周期时间对齐。
+    计算当前周期的时间，并将其存储在 current_cycle_time_ 中。
+    检查 ROS 节点是否正在运行，并根据 run_ 的值决定是否继续循环。
+
+getCycleTime: 获取当前周期内的绝对时间。
+timerReset: 重置计时器。
+*/
+
 namespace clear {
 CycleTimer::CycleTimer(Node::SharedPtr nodeHandle, scalar_t cycle_duration)
     : nodeHandle_(nodeHandle), cycle_duration_(cycle_duration) {

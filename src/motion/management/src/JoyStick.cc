@@ -1,5 +1,15 @@
 #include "JoyStick.h"
 
+/*
+通过游戏手柄输入控制机器人的运动（线速度、角速度）。
+
+joy_cb: 回调函数，处理手柄输入数据。
+getLinearVelCmd: 获取线速度命令。
+getYawVelCmd: 获取角速度命令。
+eStop: 检测紧急停止信号。
+*/
+
+
 namespace clear {
 using std::placeholders::_1;
 

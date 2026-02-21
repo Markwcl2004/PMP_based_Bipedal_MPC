@@ -25,8 +25,8 @@ find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(pinocchio_interface REQUIRED)
+find_package(estimation REQUIRED)
 find_package(assets REQUIRED)
-find_package(hpipm_interface_ament REQUIRED)
 
 set(TARGET_DEPENDENCE
   ament_cmake
@@ -36,11 +36,11 @@ set(TARGET_DEPENDENCE
   core
   pinocchio
   pinocchio_interface
+  estimation
   nav_msgs
   sensor_msgs
   assets
   yaml-cpp
-  hpipm_interface_ament
 )
 
 file(GLOB_RECURSE source ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cc)

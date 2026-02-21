@@ -1,6 +1,11 @@
 #include "Initialization.h"
 #include <yaml-cpp/yaml.h>
 
+/*
+重置机器人仿真环境，将机器人状态恢复到默认配置（关节位置、基座姿态等）。
+通过 ROS2 服务调用重置机器人状态
+*/
+
 namespace clear {
 
 Initialization::Initialization(Node::SharedPtr nodeHandle)

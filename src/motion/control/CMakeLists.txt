@@ -25,7 +25,6 @@ find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(assets REQUIRED)
-find_package(hpipm-cpp REQUIRED)
 find_package(eiquadprog REQUIRED)
 find_package(pinocchio_interface REQUIRED)
 
@@ -40,7 +39,6 @@ set(TARGET_DEPENDENCE
   sensor_msgs
   yaml-cpp
   pinocchio
-  hpipm-cpp
   pinocchio_interface
   eiquadprog
 )
@@ -55,7 +53,6 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 target_link_libraries(${PROJECT_NAME}
   ${pinocchio_LIBRARIES}
   ${YAML_CPP_LIBRARIES}
-  hpipm-cpp::hpipm-cpp
   eiquadprog::eiquadprog
 )
 

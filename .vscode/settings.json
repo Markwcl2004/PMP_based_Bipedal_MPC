@@ -100,7 +100,10 @@
         "regex": "cpp",
         "valarray": "cpp",
         "*.ipp": "cpp",
-        "span": "cpp"
+        "span": "cpp",
+        "__nullptr": "cpp",
+        "__mutex_base": "cpp",
+        "__threading_support": "cpp"
     },
     "python.analysis.extraPaths": [
         "/opt/ros/foxy/lib/python3.8/site-packages/"
@@ -167,5 +170,6 @@
         "editor.defaultFormatter": "ms-python.python"
     },
     "python.formatting.provider": "none",
-    "cmake.configureOnOpen": false
+    "cmake.configureOnOpen": false,
+    "C_Cpp.errorSquiggles": "disabled"
 }

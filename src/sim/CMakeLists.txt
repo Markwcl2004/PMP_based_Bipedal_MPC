@@ -45,8 +45,48 @@ set(TARGET_DEPENDENCE
   yaml-cpp
 )
 
+# Locate MuJoCo shared library.
+# Prefer installed locations, but fall back to the vendored copy in this repo.
+set(MUJOCO_LIB_PATH "")
+
+# 1) merge-install layout (install/lib)
+file(GLOB _mujoco_candidates_install
+  "${CMAKE_INSTALL_PREFIX}/lib/libmujoco.so*"
+)
+if(_mujoco_candidates_install)
+  list(SORT _mujoco_candidates_install)
+  list(GET _mujoco_candidates_install -1 MUJOCO_LIB_PATH)
+endif()
+
+# 2) isolated layout (install/<pkg>/lib) - keep for compatibility
+if(MUJOCO_LIB_PATH STREQUAL "")
+  get_filename_component(COLCON_PREFIX_PATH "${CMAKE_INSTALL_PREFIX}" DIRECTORY)
+  file(GLOB _mujoco_candidates_isolated
+    "${COLCON_PREFIX_PATH}/mujocodl/lib/libmujoco.so*"
+  )
+  if(_mujoco_candidates_isolated)
+    list(SORT _mujoco_candidates_isolated)
+    list(GET _mujoco_candidates_isolated -1 MUJOCO_LIB_PATH)
+  endif()
+endif()
+
+# 3) vendored library in source tree
+if(MUJOCO_LIB_PATH STREQUAL "")
+  file(GLOB _mujoco_candidates_vendored
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_parties/mujocodl/mujoco/lib/libmujoco.so*"
+  )
+  if(_mujoco_candidates_vendored)
+    list(SORT _mujoco_candidates_vendored)
+    list(GET _mujoco_candidates_vendored -1 MUJOCO_LIB_PATH)
+  endif()
+endif()
+
+if(MUJOCO_LIB_PATH STREQUAL "" OR NOT EXISTS "${MUJOCO_LIB_PATH}")
+  message(FATAL_ERROR "MuJoCo library not found. Tried install and vendored locations.")
+endif()
+
 add_library(mujoco SHARED IMPORTED)
-set_target_properties(mujoco PROPERTIES IMPORTED_LOCATION ${CMAKE_INSTALL_PREFIX}/lib/libmujoco.so)
+set_target_properties(mujoco PROPERTIES IMPORTED_LOCATION ${MUJOCO_LIB_PATH})
 
 add_executable(sim src/sim.cc src/sim/SimPublisher.cc)
 target_include_directories(sim PUBLIC

@@ -4,6 +4,15 @@
 #include <pinocchio/Orientation.h>
 #include <yaml-cpp/yaml.h>
 
+/*
+机器人运动管理器，负责协调各模块（状态估计、步态调度、轨迹生成、轨迹稳定等）的工作流程。
+
+init: 初始化所有子模块（如状态估计、步态调度、轨迹生成等）。
+innerLoop: 内部循环，定期更新各模块状态并协调数据流动。
+eStop: 检测紧急停止信号。
+*/
+
+
 namespace clear {
 
 MotionManager::MotionManager() : Node("MotionManager") {
