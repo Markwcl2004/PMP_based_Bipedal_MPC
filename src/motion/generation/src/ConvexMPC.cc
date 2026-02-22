@@ -3,6 +3,10 @@
 #include <rcpputils/asserts.hpp>
 #include <yaml-cpp/yaml.h>
 #include "generation/PMPOptimizer.h"
+#include <fstream>
+#include <sstream>
+#include <iomanip>
+#include <chrono>
 
 namespace clear {
 
@@ -50,35 +54,52 @@ ConvexMPC::ConvexMPC(Node::SharedPtr nodeHandle,
   t0 = nodeHandle->now().seconds();
   time_prog_begin = nodeHandle->now().seconds();
 
-  // MLP 残差补偿初始化
+  // MLP 初始化：加载与控制启用分离
+  // use_mlp_residual_ 控制是否施加到控制，mlp_network_ 只要提供路径就加载（用于影子记录）
   if (config_["generation"]["use_mlp_residual"]) {
     use_mlp_residual_ = config_["generation"]["use_mlp_residual"].as<bool>(false);
   }
   if (config_["generation"]["mlp_residual_clamp"]) {
     mlp_residual_clamp_ = config_["generation"]["mlp_residual_clamp"].as<double>(0.5);
   }
-  if (use_mlp_residual_) {
+  if (config_["generation"]["mlp_config"]) {
     std::string mlp_config_path = config_["generation"]["mlp_config"].as<std::string>("");
     if (!mlp_config_path.empty()) {
       try {
         mlp_network_ = std::make_unique<MLPNetwork>(mlp_config_path);
         RCLCPP_INFO(nodeHandle_->get_logger(),
-                    "[ConvexMPC] MLP residual enabled (input=%d, output=%d, clamp=%.2f)",
+                    "[ConvexMPC] MLP loaded (input=%d, output=%d, clamp=%.2f) — %s",
                     mlp_network_->getInputDim(), mlp_network_->getOutputDim(),
-                    mlp_residual_clamp_);
+                    mlp_residual_clamp_,
+                    use_mlp_residual_ ? "applied to control" : "shadow mode only");
       } catch (const std::exception& e) {
         RCLCPP_WARN(nodeHandle_->get_logger(),
-                    "[ConvexMPC] MLP load failed: %s — falling back to pure linear MPC", e.what());
+                    "[ConvexMPC] MLP load failed: %s", e.what());
         use_mlp_residual_ = false;
         mlp_network_.reset();
       }
-    } else {
-      RCLCPP_WARN(nodeHandle_->get_logger(),
-                  "[ConvexMPC] mlp_config path empty — MLP residual disabled");
-      use_mlp_residual_ = false;
     }
-  } else {
-    RCLCPP_INFO(nodeHandle_->get_logger(), "[ConvexMPC] MLP residual disabled");
+  }
+  if (use_mlp_residual_ && !mlp_network_) {
+    RCLCPP_WARN(nodeHandle_->get_logger(),
+                "[ConvexMPC] use_mlp_residual=true but MLP not loaded, disabling");
+    use_mlp_residual_ = false;
+  }
+  if (!mlp_network_) {
+    RCLCPP_INFO(nodeHandle_->get_logger(), "[ConvexMPC] No MLP loaded");
+  }
+
+  // 训练数据采集开关
+  if (config_["generation"]["collect_training_data"]) {
+    collect_training_data_ = config_["generation"]["collect_training_data"].as<bool>(false);
+  }
+  if (config_["generation"]["max_training_samples"]) {
+    max_training_samples_ = config_["generation"]["max_training_samples"].as<int>(10000);
+  }
+  if (collect_training_data_) {
+    RCLCPP_INFO(nodeHandle_->get_logger(),
+                "[ConvexMPC] Training data collection ENABLED (max %d samples -> mpc_data/)",
+                max_training_samples_);
   }
 
   RCLCPP_INFO(rclcpp::get_logger("ConvexMPC"), "ConvexMPC: Construction done");
@@ -316,14 +337,32 @@ void ConvexMPC::optimize() {
   auto rpy_m = toEulerAngles(base_pose.rotation());
   rpy_des_start = rpy_m - computeEulerAngleErr(rpy_m, rpy_traj->evaluate(time_cur));
 
+  // x0 提前计算，供方案 C 的 δ₀ 使用
+  vector_t x0(12);
+  x0 << base_pose.translation(), base_twist.linear(), rpy_m, base_twist.angular();
+
+  // 方案 C'：单步扰动前馈（只修正 k=0）
+  // δ₀ = MLP(x₀, u_prev) 仅加到 b_0，物理含义：修正当前时刻的单步动力学误差
+  // 后续步 k=1..N-1 使用名义动力学，避免误差在 N 步上线性累积
+  // δ₀ 的影响仍通过前向传播传递到整个 horizon（x_1 偏移传播至 x_2..x_N）
+  vector_t delta0 = vector_t::Zero(12);
+  if (use_mlp_residual_ && mlp_network_ && has_prev_data_) {
+    vector_t mlp_input(x0.size() + prev_u_.size());
+    mlp_input << x0, prev_u_;
+    delta0 = mlp_network_->forward(mlp_input);
+    delta0 = delta0.cwiseMax(-mlp_residual_clamp_).cwiseMin(mlp_residual_clamp_);
+  }
+
   for (size_t k = 0; k <= N; ++k) {
-    if (k < N) getDynamics(time_cur, k, mode_schedule);
+    if (k < N) {
+      getDynamics(time_cur, k, mode_schedule);
+      if (k == 0) {
+        ocp_[0].b += delta0;  // 只修正第一步，消除 N 倍累积放大
+      }
+    }
     getInequalityConstraints(k, N, mode_schedule);
     getCosts(time_cur, k, N, mode_schedule);
   }
-
-  vector_t x0(12);
-  x0 << base_pose.translation(), base_twist.linear(), rpy_m, base_twist.angular();
 
   const size_t nx = 12;
   const size_t nu = foot_names.size() * 3;
@@ -334,24 +373,39 @@ void ConvexMPC::optimize() {
     optimizer.setWarmStart(solution_);
   }
 
-  // 设置 MLP 残差回调 (RTI Level 1)
-  if (use_mlp_residual_ && mlp_network_) {
-    const double clamp_val = mlp_residual_clamp_;
-    optimizer.setResidualCallback(
-      [this, clamp_val](const vector_t& x, const vector_t& u) -> vector_t {
-        Eigen::VectorXd input(x.size() + u.size());
-        input << x, u;
-        Eigen::VectorXd delta = mlp_network_->forward(input);
-        delta = delta.cwiseMax(-clamp_val).cwiseMin(clamp_val);
-        return delta;
-      });
-  }
-
   auto start_time = std::chrono::high_resolution_clock::now();
+
+  // 数据采集：利用当前 x0 作为上一步的 x_next_true
+  if (collect_training_data_) {
+    collectTrainingData(x0);
+  }
 
   if (optimizer.solve(solution_)) {
     auto end_time = std::chrono::high_resolution_clock::now();
     double solve_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
+
+    // 每步都更新 prev_u_ / has_prev_data_，方案 C 需要上一步控制量
+    // 注意：此更新必须独立于 collect_training_data_，否则 use_mlp_residual_ 时
+    //       has_prev_data_ 永远为 false，delta0 始终为零，方案 C 不生效。
+    prev_u_ = solution_[0].u;
+    has_prev_data_ = true;
+
+    // 训练数据采集（额外记录 x_k, x_next_est, delta_mlp）
+    if (collect_training_data_ && !training_data_written_) {
+      prev_x_ = x0;
+      // 记录名义预测（去除 delta0，保证训练数据格式与无 MLP 时一致）
+      prev_x_next_est_ = ocp_[0].A * x0 + ocp_[0].B * solution_[0].u + (ocp_[0].b - delta0);
+      // 影子 MLP：计算 delta_mlp(x0, u0) 但不施加到控制
+      if (mlp_network_) {
+        vector_t mlp_input(x0.size() + solution_[0].u.size());
+        mlp_input << x0, solution_[0].u;
+        prev_delta_mlp_ = mlp_network_->forward(mlp_input);
+        prev_delta_mlp_ = prev_delta_mlp_.cwiseMax(-mlp_residual_clamp_)
+                                         .cwiseMin( mlp_residual_clamp_);
+      } else {
+        prev_delta_mlp_.setZero(12);
+      }
+    }
 
     fitTraj(time_cur, N);
     evaluateAndExportMetrics(time_cur, dt_, solve_ms);
@@ -511,5 +565,59 @@ void ConvexMPC::evaluateAndExportMetrics(double t0, double dt, double solve_time
   metrics_cache_.push_back(oss.str());
 }
 
+
+// ─── 训练数据采集 ──────────────────────────────────────────────
+// 调用时机：每步 optimize() 开头，x_now 即上一步的 x_next_true
+void ConvexMPC::collectTrainingData(const vector_t& x_now) {
+  if (training_data_written_ || !has_prev_data_) return;
+  if ((int)training_rows_.size() >= max_training_samples_) {
+    writeTrainingData();
+    return;
+  }
+
+  // 组装一行: timestamp, x_k(12), u_k(6), x_next_est(12), x_next_true(12), delta_mlp(12)
+  std::ostringstream oss;
+  oss << std::fixed << std::setprecision(6) << nodeHandle_->now().seconds();
+  for (int i = 0; i < 12; ++i) oss << "," << prev_x_(i);
+  for (int i = 0; i < (int)prev_u_.size(); ++i) oss << "," << prev_u_(i);
+  for (int i = 0; i < 12; ++i) oss << "," << prev_x_next_est_(i);
+  for (int i = 0; i < 12; ++i) oss << "," << x_now(i);
+  // 影子 MLP 预测（不施加，仅记录）：delta_true = x_now - x_next_est 可事后计算
+  if (prev_delta_mlp_.size() == 0) prev_delta_mlp_.setZero(12);
+  for (int i = 0; i < 12; ++i) oss << "," << prev_delta_mlp_(i);
+  training_rows_.push_back(oss.str());
+
+  if ((int)training_rows_.size() % 1000 == 0) {
+    RCLCPP_INFO(nodeHandle_->get_logger(),
+                "[TrainData] Collected %zu / %d samples",
+                training_rows_.size(), max_training_samples_);
+  }
+}
+
+void ConvexMPC::writeTrainingData() {
+  if (training_data_written_ || training_rows_.empty()) return;
+
+  // 生成带时间戳的文件名
+  auto t = std::chrono::system_clock::now().time_since_epoch().count();
+  std::string path = "/home/markwcl/mpc_data/mlp_training_data_" +
+                     std::to_string(t / 1000000000LL) + ".csv";
+
+  std::ofstream f(path);
+  // 表头
+  f << "timestamp";
+  for (int i = 0; i < 12; ++i) f << ",x_n_" << i;
+  for (int i = 0; i < (int)prev_u_.size(); ++i) f << ",u_n_" << i;
+  for (int i = 0; i < 12; ++i) f << ",x_next_est_" << i;
+  for (int i = 0; i < 12; ++i) f << ",x_next_true_" << i;
+  for (int i = 0; i < 12; ++i) f << ",delta_mlp_" << i;
+  f << "\n";
+  for (auto& row : training_rows_) f << row << "\n";
+  f.close();
+
+  training_data_written_ = true;
+  RCLCPP_INFO(nodeHandle_->get_logger(),
+              "[TrainData] Saved %zu samples -> %s",
+              training_rows_.size(), path.c_str());
+}
 
 } // namespace clear

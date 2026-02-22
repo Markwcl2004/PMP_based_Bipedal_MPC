@@ -47,6 +47,10 @@ private:
 
   void evaluateAndExportMetrics(double t0, double dt, double solve_time_ms);
 
+  void collectTrainingData(const vector_t& x_now);
+
+  void writeTrainingData();
+
 private:
   Node::SharedPtr nodeHandle_;
   std::shared_ptr<PinocchioInterface> pinocchioInterface_ptr_;
@@ -84,6 +88,17 @@ private:
   std::unique_ptr<clear::MLPNetwork> mlp_network_;
   bool use_mlp_residual_ = false;
   double mlp_residual_clamp_ = 0.5;
+
+  // 训练数据采集
+  bool collect_training_data_ = false;
+  int max_training_samples_ = 10000;   // 最多采集样本数
+  vector_t prev_x_;                   // 上一步的状态 x_k
+  vector_t prev_u_;                   // 上一步的控制 u_k
+  vector_t prev_x_next_est_;          // 上一步的名义预测 x_next_est
+  vector_t prev_delta_mlp_;           // 上一步的 MLP 影子预测（不施加，仅记录）
+  bool has_prev_data_ = false;
+  std::vector<std::string> training_rows_;
+  bool training_data_written_ = false;
 };
 
 } // namespace clear
