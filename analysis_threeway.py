@@ -20,7 +20,7 @@ CSV_PMP    = "/home/markwcl/My_MPC/pmp_eval_result.csv"
 CSV_PMPML  = "/home/markwcl/MPC_ML/pmp_ml_eval_result.csv"
 OUT_DIR    = Path("/home/markwcl/MPC_ML/img")
 
-LABELS     = ["HPIPM",  "PMP",    "PMP+ML(C)"]
+LABELS     = ["HPIPM",  "PMP",    "PMP+ML(C')"]
 CSV_PATHS  = [CSV_HPIPM, CSV_PMP, CSV_PMPML]
 COLORS     = ["#2196F3", "#FF9800", "#4CAF50"]   # blue / orange / green
 
@@ -211,3 +211,65 @@ print(f"[保存] {out3}")
 plt.close()
 
 print("\n[完成] 三方对比分析完毕。")
+
+# ─── 图4：汇总 bar chart（给导师看的单张总览图）─────────────────────────────────
+fig, axes = plt.subplots(1, 4, figsize=(16, 5))
+fig.suptitle("Three-way MPC Comparison: HPIPM vs PMP vs PMP+ML(C')\n(same-session evaluation, bipedal robot walking)",
+             fontsize=12, fontweight="bold", y=1.02)
+
+bar_metrics = [
+    ("solve_time_ms",           "Solve Time (ms)",           ".2f", False),
+    ("avg_tracking_error",      "Avg Tracking Error",        ".4f", True),
+    ("max_tracking_error",      "Max Tracking Error",        ".4f", True),
+    ("max_constraint_violation","Max Constraint Viol. (N)",  ".1f", True),
+]
+
+valid_labels = [l for l, df in zip(LABELS, dfs) if df is not None]
+valid_colors = [c for c, df in zip(COLORS, dfs) if df is not None]
+valid_dfs    = [df for df in dfs if df is not None]
+
+for ax, (col, ylabel, fmt, lower_better) in zip(axes, bar_metrics):
+    means = [df[col].mean() for df in valid_dfs]
+    stds  = [df[col].std()  for df in valid_dfs]
+
+    bars = ax.bar(valid_labels, means, yerr=stds,
+                  color=valid_colors, alpha=0.85,
+                  edgecolor="black", linewidth=0.8,
+                  capsize=5, error_kw=dict(linewidth=1.2))
+
+    # 在每个 bar 上标注数值
+    for bar, mean, std in zip(bars, means, stds):
+        ax.text(bar.get_x() + bar.get_width()/2,
+                bar.get_height() + std + max(means)*0.01,
+                f"{mean:{fmt}}", ha="center", va="bottom",
+                fontsize=8.5, fontweight="bold")
+
+    # 标注相对 PMP 的提升（如果 PMP+ML 存在）
+    if len(valid_dfs) == 3:
+        ref = means[1]   # PMP
+        ml  = means[2]   # PMP+ML
+        delta_pct = (ml - ref) / ref * 100
+        sign = "↑" if delta_pct > 0 else "↓"
+        color_ann = "green" if (lower_better and delta_pct < 0) else \
+                    ("red"  if lower_better and delta_pct > 0 else "gray")
+        ax.text(2, means[2] * 0.5,
+                f"{sign}{abs(delta_pct):.1f}%\nvs PMP",
+                ha="center", va="center", fontsize=8,
+                color=color_ann, fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=color_ann, alpha=0.8))
+
+    ax.set_ylabel(ylabel, fontsize=9)
+    ax.set_title(ylabel, fontsize=10, fontweight="bold", pad=8)
+    ax.grid(True, axis="y", alpha=0.3, linestyle="--")
+    ax.set_ylim(bottom=0)
+    ax.tick_params(axis="x", labelsize=8.5)
+    note = "lower is better" if lower_better else "lower is faster"
+    ax.text(0.98, 0.97, f"({'lower is better' if lower_better else 'lower = faster'})",
+            transform=ax.transAxes, ha="right", va="top",
+            fontsize=7, color="gray", style="italic")
+
+plt.tight_layout()
+out4 = OUT_DIR / "threeway_summary.png"
+plt.savefig(out4, dpi=200, bbox_inches="tight")
+print(f"[保存] {out4}")
+plt.close()

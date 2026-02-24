@@ -87,6 +87,8 @@ private:
   // MLP 残差补偿
   std::unique_ptr<clear::MLPNetwork> mlp_network_;
   bool use_mlp_residual_ = false;
+  bool mlp_full_recursive_ = false;  // 全递归 MLP（每步调用），false 时为 Method C'（只修正 b_0）
+  int mlp_recursive_steps_ = -1;    // 全递归时生效：MLP 修正的步数，-1 = 全部 N 步
   double mlp_residual_clamp_ = 0.5;
 
   // 训练数据采集

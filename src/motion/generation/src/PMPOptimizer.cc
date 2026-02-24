@@ -61,7 +61,7 @@ void PMPOptimizer::forwardSimulate() {
     stages_[k + 1].x = A * stages_[k].x + B * stages_[k].u + b;
     // RTI: MLP 残差补偿 (Level 1)
     if (residual_fn_) {
-      stages_[k + 1].x += residual_fn_(stages_[k].x, stages_[k].u);
+      stages_[k + 1].x += residual_fn_(k, stages_[k].x, stages_[k].u);
     }
   }
 }

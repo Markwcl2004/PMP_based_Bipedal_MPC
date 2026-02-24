@@ -49,7 +49,7 @@ struct PMPStageData {
 // === PMP优化器主类 ===
 class PMPOptimizer {
  public:
-  using ResidualFn = std::function<vector_t(const vector_t& x, const vector_t& u)>;
+  using ResidualFn = std::function<vector_t(size_t k, const vector_t& x, const vector_t& u)>;
 
   PMPOptimizer(const std::vector<OcpStage>& ocp, size_t nx, size_t nu);
   void setInitialState(const vector_t& x0);

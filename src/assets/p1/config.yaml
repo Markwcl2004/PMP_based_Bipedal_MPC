@@ -75,7 +75,9 @@ generation:
   dt: 0.02
   mu: 0.5
   force_reg: 1e-5
-  use_mlp_residual: true           # 方案 C：常数扰动前馈，δ₀ 加到所有预测步的 b_k
+  use_mlp_residual: true
+  mlp_full_recursive: true         # true = 递归 MLP，false = Method C'（只修正 b_0）
+  mlp_recursive_steps: 3           # 递归模式下 MLP 修正的步数（-1 = 全部 N 步）
   mlp_config: "/home/markwcl/MPC_ML/models/mlp_residual_model.yaml"
   mlp_residual_clamp: 0.05
   collect_training_data: false

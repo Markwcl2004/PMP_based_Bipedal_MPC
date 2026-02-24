@@ -62,6 +62,12 @@ ConvexMPC::ConvexMPC(Node::SharedPtr nodeHandle,
   if (config_["generation"]["mlp_residual_clamp"]) {
     mlp_residual_clamp_ = config_["generation"]["mlp_residual_clamp"].as<double>(0.5);
   }
+  if (config_["generation"]["mlp_full_recursive"]) {
+    mlp_full_recursive_ = config_["generation"]["mlp_full_recursive"].as<bool>(false);
+  }
+  if (config_["generation"]["mlp_recursive_steps"]) {
+    mlp_recursive_steps_ = config_["generation"]["mlp_recursive_steps"].as<int>(-1);
+  }
   if (config_["generation"]["mlp_config"]) {
     std::string mlp_config_path = config_["generation"]["mlp_config"].as<std::string>("");
     if (!mlp_config_path.empty()) {
@@ -71,7 +77,11 @@ ConvexMPC::ConvexMPC(Node::SharedPtr nodeHandle,
                     "[ConvexMPC] MLP loaded (input=%d, output=%d, clamp=%.2f) — %s",
                     mlp_network_->getInputDim(), mlp_network_->getOutputDim(),
                     mlp_residual_clamp_,
-                    use_mlp_residual_ ? "applied to control" : "shadow mode only");
+                    use_mlp_residual_ ? (mlp_full_recursive_ ? (mlp_recursive_steps_ > 0 ? "RECURSIVE (limited steps)" : "FULL RECURSIVE (every step)") : "Method C' (b_0 only)") : "shadow mode only");
+        if (use_mlp_residual_ && mlp_full_recursive_ && mlp_recursive_steps_ > 0) {
+          RCLCPP_INFO(nodeHandle_->get_logger(),
+                      "[ConvexMPC] MLP recursive steps: %d / N", mlp_recursive_steps_);
+        }
       } catch (const std::exception& e) {
         RCLCPP_WARN(nodeHandle_->get_logger(),
                     "[ConvexMPC] MLP load failed: %s", e.what());
@@ -341,12 +351,12 @@ void ConvexMPC::optimize() {
   vector_t x0(12);
   x0 << base_pose.translation(), base_twist.linear(), rpy_m, base_twist.angular();
 
-  // 方案 C'：单步扰动前馈（只修正 k=0）
-  // δ₀ = MLP(x₀, u_prev) 仅加到 b_0，物理含义：修正当前时刻的单步动力学误差
-  // 后续步 k=1..N-1 使用名义动力学，避免误差在 N 步上线性累积
-  // δ₀ 的影响仍通过前向传播传递到整个 horizon（x_1 偏移传播至 x_2..x_N）
+  // MLP 残差补偿：两种模式
+  // - Method C'（默认）：δ₀ = MLP(x₀, u_prev) 仅加到 b_0
+  // - 全递归：每步 forwardSimulate 时调用 MLP(x_k, u_k)
   vector_t delta0 = vector_t::Zero(12);
-  if (use_mlp_residual_ && mlp_network_ && has_prev_data_) {
+  if (use_mlp_residual_ && !mlp_full_recursive_ && mlp_network_ && has_prev_data_) {
+    // Method C'：单步扰动前馈
     vector_t mlp_input(x0.size() + prev_u_.size());
     mlp_input << x0, prev_u_;
     delta0 = mlp_network_->forward(mlp_input);
@@ -356,8 +366,8 @@ void ConvexMPC::optimize() {
   for (size_t k = 0; k <= N; ++k) {
     if (k < N) {
       getDynamics(time_cur, k, mode_schedule);
-      if (k == 0) {
-        ocp_[0].b += delta0;  // 只修正第一步，消除 N 倍累积放大
+      if (k == 0 && !mlp_full_recursive_) {
+        ocp_[0].b += delta0;  // Method C'：只修正第一步
       }
     }
     getInequalityConstraints(k, N, mode_schedule);
@@ -371,6 +381,23 @@ void ConvexMPC::optimize() {
   optimizer.setInitialState(x0);
   if (!solution_.empty()) {
     optimizer.setWarmStart(solution_);
+  }
+
+  // 全递归 MLP：在 forwardSimulate 每步调用 MLP 修正动力学
+  if (use_mlp_residual_ && mlp_full_recursive_ && mlp_network_) {
+    double clamp = mlp_residual_clamp_;
+    int max_steps = mlp_recursive_steps_;  // -1 = 全部 N 步
+    auto* mlp_ptr = mlp_network_.get();
+    optimizer.setResidualCallback(
+      [mlp_ptr, clamp, max_steps](size_t k, const vector_t& x, const vector_t& u) -> vector_t {
+        if (max_steps >= 0 && static_cast<int>(k) >= max_steps) {
+          return vector_t::Zero(x.size());  // 超过指定步数，不修正
+        }
+        vector_t mlp_input(x.size() + u.size());
+        mlp_input << x, u;
+        vector_t delta = mlp_ptr->forward(mlp_input);
+        return delta.cwiseMax(-clamp).cwiseMin(clamp);
+      });
   }
 
   auto start_time = std::chrono::high_resolution_clock::now();
