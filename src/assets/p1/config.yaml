@@ -65,7 +65,7 @@ simulation:
 
 estimation:
   dt: 0.001
-  use_odom: False
+  use_odom: True
 
 controller:
   frequency: 1000.0
@@ -77,8 +77,12 @@ generation:
   force_reg: 1e-5
   use_mlp_residual: true
   mlp_full_recursive: true         # true = 递归 MLP，false = Method C'（只修正 b_0）
-  mlp_recursive_steps: 3           # 递归模式下 MLP 修正的步数（-1 = 全部 N 步）
-  mlp_config: "/home/markwcl/MPC_ML/models/mlp_residual_model.yaml"
+  mlp_recursive_steps: 3           # 递归模式下 MLP 修正的步数（3 = 前3步）
+  # mlp_v1_config: "/home/markwcl/MPC_ML/models/mlp_residual_model.yaml"  # 暂时禁用混合模式
+  # mlp_v1_steps: 3
+  mlp_config: "/home/markwcl/MPC_ML/models/mlp_v3_round1.yaml"
   mlp_residual_clamp: 0.05
   collect_training_data: false
-  max_training_samples: 5000
+  max_training_samples: 10000
+  collect_window_data: false
+  max_window_samples: 5000

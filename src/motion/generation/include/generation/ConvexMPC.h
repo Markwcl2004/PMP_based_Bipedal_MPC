@@ -51,6 +51,10 @@ private:
 
   void writeTrainingData();
 
+  void collectWindowData(const vector_t& x_now, const vector_t& delta0);
+
+  void writeWindowData();
+
 private:
   Node::SharedPtr nodeHandle_;
   std::shared_ptr<PinocchioInterface> pinocchioInterface_ptr_;
@@ -85,7 +89,9 @@ private:
   double time_prog_begin;
 
   // MLP 残差补偿
-  std::unique_ptr<clear::MLPNetwork> mlp_network_;
+  std::unique_ptr<clear::MLPNetwork> mlp_network_;       // v2 模型（或单模型模式下的唯一模型）
+  std::unique_ptr<clear::MLPNetwork> mlp_network_v1_;    // 混合模式：前 N 步用 v1（LKF输入分布）
+  int mlp_v1_steps_ = 1;                                // v1 负责的步数（默认1，即仅 k=0）
   bool use_mlp_residual_ = false;
   bool mlp_full_recursive_ = false;  // 全递归 MLP（每步调用），false 时为 Method C'（只修正 b_0）
   int mlp_recursive_steps_ = -1;    // 全递归时生效：MLP 修正的步数，-1 = 全部 N 步
@@ -101,6 +107,20 @@ private:
   bool has_prev_data_ = false;
   std::vector<std::string> training_rows_;
   bool training_data_written_ = false;
+
+  // 窗口数据采集
+  bool collect_window_data_ = false;
+  int max_window_samples_ = 500;
+  int window_count_ = 0;
+  bool window_data_written_ = false;
+  std::vector<std::string> window_rows_;
+
+  // 上一窗口缓存（等待 k=0 的 x_next_true）
+  struct WindowStep {
+    vector_t x_pred, u, x_next_est, x_next_true;
+  };
+  std::vector<WindowStep> prev_window_buf_;
+  bool has_prev_window_ = false;
 };
 
 } // namespace clear

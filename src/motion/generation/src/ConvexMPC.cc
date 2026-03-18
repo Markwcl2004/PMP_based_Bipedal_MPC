@@ -90,6 +90,26 @@ ConvexMPC::ConvexMPC(Node::SharedPtr nodeHandle,
       }
     }
   }
+  // 加载 v1 模型（可选，混合模式：前 mlp_v1_steps_ 步用 v1，之后用 v2）
+  if (config_["generation"]["mlp_v1_steps"]) {
+    mlp_v1_steps_ = config_["generation"]["mlp_v1_steps"].as<int>(1);
+  }
+  if (config_["generation"]["mlp_v1_config"]) {
+    std::string v1_path = config_["generation"]["mlp_v1_config"].as<std::string>("");
+    if (!v1_path.empty()) {
+      try {
+        mlp_network_v1_ = std::make_unique<MLPNetwork>(v1_path);
+        RCLCPP_INFO(nodeHandle_->get_logger(),
+                    "[ConvexMPC] MLP v1 loaded (input=%d, output=%d) — hybrid mode: v1 for k<[%d], v2 for k>=[%d]",
+                    mlp_network_v1_->getInputDim(), mlp_network_v1_->getOutputDim(),
+                    mlp_v1_steps_, mlp_v1_steps_);
+      } catch (const std::exception& e) {
+        RCLCPP_WARN(nodeHandle_->get_logger(),
+                    "[ConvexMPC] MLP v1 load failed: %s — will use v2 for all steps", e.what());
+        mlp_network_v1_.reset();
+      }
+    }
+  }
   if (use_mlp_residual_ && !mlp_network_) {
     RCLCPP_WARN(nodeHandle_->get_logger(),
                 "[ConvexMPC] use_mlp_residual=true but MLP not loaded, disabling");
@@ -110,6 +130,19 @@ ConvexMPC::ConvexMPC(Node::SharedPtr nodeHandle,
     RCLCPP_INFO(nodeHandle_->get_logger(),
                 "[ConvexMPC] Training data collection ENABLED (max %d samples -> mpc_data/)",
                 max_training_samples_);
+  }
+
+  // 窗口数据采集开关
+  if (config_["generation"]["collect_window_data"]) {
+    collect_window_data_ = config_["generation"]["collect_window_data"].as<bool>(false);
+  }
+  if (config_["generation"]["max_window_samples"]) {
+    max_window_samples_ = config_["generation"]["max_window_samples"].as<int>(500);
+  }
+  if (collect_window_data_) {
+    RCLCPP_INFO(nodeHandle_->get_logger(),
+                "[ConvexMPC] Window data collection ENABLED (max %d windows -> mpc_data/with_mpc_windows/)",
+                max_window_samples_);
   }
 
   RCLCPP_INFO(rclcpp::get_logger("ConvexMPC"), "ConvexMPC: Construction done");
@@ -356,10 +389,11 @@ void ConvexMPC::optimize() {
   // - 全递归：每步 forwardSimulate 时调用 MLP(x_k, u_k)
   vector_t delta0 = vector_t::Zero(12);
   if (use_mlp_residual_ && !mlp_full_recursive_ && mlp_network_ && has_prev_data_) {
-    // Method C'：单步扰动前馈
+    // Method C'：单步扰动前馈（k=0 优先使用 v1 模型）
+    auto* mlp_for_k0 = mlp_network_v1_ ? mlp_network_v1_.get() : mlp_network_.get();
     vector_t mlp_input(x0.size() + prev_u_.size());
     mlp_input << x0, prev_u_;
-    delta0 = mlp_network_->forward(mlp_input);
+    delta0 = mlp_for_k0->forward(mlp_input);
     delta0 = delta0.cwiseMax(-mlp_residual_clamp_).cwiseMin(mlp_residual_clamp_);
   }
 
@@ -384,17 +418,22 @@ void ConvexMPC::optimize() {
   }
 
   // 全递归 MLP：在 forwardSimulate 每步调用 MLP 修正动力学
+  // 混合模式：前 v1_steps 步用 v1，之后用 v2
   if (use_mlp_residual_ && mlp_full_recursive_ && mlp_network_) {
     double clamp = mlp_residual_clamp_;
     int max_steps = mlp_recursive_steps_;  // -1 = 全部 N 步
-    auto* mlp_ptr = mlp_network_.get();
+    int v1_steps = mlp_v1_steps_;          // v1 负责的步数
+    auto* mlp_v2_ptr = mlp_network_.get();
+    auto* mlp_v1_ptr = mlp_network_v1_ ? mlp_network_v1_.get() : mlp_v2_ptr;  // 无 v1 时回退到 v2
     optimizer.setResidualCallback(
-      [mlp_ptr, clamp, max_steps](size_t k, const vector_t& x, const vector_t& u) -> vector_t {
+      [mlp_v1_ptr, mlp_v2_ptr, clamp, max_steps, v1_steps](size_t k, const vector_t& x, const vector_t& u) -> vector_t {
         if (max_steps >= 0 && static_cast<int>(k) >= max_steps) {
           return vector_t::Zero(x.size());  // 超过指定步数，不修正
         }
         vector_t mlp_input(x.size() + u.size());
         mlp_input << x, u;
+        // 前 v1_steps 步用 v1，之后用 v2
+        auto* mlp_ptr = (static_cast<int>(k) < v1_steps) ? mlp_v1_ptr : mlp_v2_ptr;
         vector_t delta = mlp_ptr->forward(mlp_input);
         return delta.cwiseMax(-clamp).cwiseMin(clamp);
       });
@@ -432,6 +471,11 @@ void ConvexMPC::optimize() {
       } else {
         prev_delta_mlp_.setZero(12);
       }
+    }
+
+    // 窗口数据采集
+    if (collect_window_data_) {
+      collectWindowData(x0, delta0);
     }
 
     fitTraj(time_cur, N);
@@ -602,16 +646,22 @@ void ConvexMPC::collectTrainingData(const vector_t& x_now) {
     return;
   }
 
-  // 组装一行: timestamp, x_k(12), u_k(6), x_next_est(12), x_next_true(12), delta_mlp(12)
+  // 组装一行: timestamp, x_n(12), u_n(6), x_next_est(12), x_next_true(12), delta_mlp(12),
+  //           x_true(12), x_next_nom(12)
+  // v1 列：x_n/x_next_est 基于 LKF 估计（或 use_odom 时为 ground truth）
+  // v2 列：x_true/x_next_nom 与 x_n/x_next_est 相同（use_odom=True 时均为 ground truth）
   std::ostringstream oss;
   oss << std::fixed << std::setprecision(6) << nodeHandle_->now().seconds();
+  // v1 列
   for (int i = 0; i < 12; ++i) oss << "," << prev_x_(i);
   for (int i = 0; i < (int)prev_u_.size(); ++i) oss << "," << prev_u_(i);
   for (int i = 0; i < 12; ++i) oss << "," << prev_x_next_est_(i);
   for (int i = 0; i < 12; ++i) oss << "," << x_now(i);
-  // 影子 MLP 预测（不施加，仅记录）：delta_true = x_now - x_next_est 可事后计算
   if (prev_delta_mlp_.size() == 0) prev_delta_mlp_.setZero(12);
   for (int i = 0; i < 12; ++i) oss << "," << prev_delta_mlp_(i);
+  // v2 列：x_true = prev_x_, x_next_nom = prev_x_next_est_
+  for (int i = 0; i < 12; ++i) oss << "," << prev_x_(i);
+  for (int i = 0; i < 12; ++i) oss << "," << prev_x_next_est_(i);
   training_rows_.push_back(oss.str());
 
   if ((int)training_rows_.size() % 1000 == 0) {
@@ -624,19 +674,22 @@ void ConvexMPC::collectTrainingData(const vector_t& x_now) {
 void ConvexMPC::writeTrainingData() {
   if (training_data_written_ || training_rows_.empty()) return;
 
-  // 生成带时间戳的文件名
+  // 生成带时间戳的文件名 (输出到 v2 目录)
   auto t = std::chrono::system_clock::now().time_since_epoch().count();
-  std::string path = "/home/markwcl/mpc_data/mlp_training_data_" +
+  std::string path = "/home/markwcl/mpc_data/v2/mlp_training_data_" +
                      std::to_string(t / 1000000000LL) + ".csv";
 
   std::ofstream f(path);
-  // 表头
+  // 表头：v1 列 + v2 列
   f << "timestamp";
   for (int i = 0; i < 12; ++i) f << ",x_n_" << i;
   for (int i = 0; i < (int)prev_u_.size(); ++i) f << ",u_n_" << i;
   for (int i = 0; i < 12; ++i) f << ",x_next_est_" << i;
   for (int i = 0; i < 12; ++i) f << ",x_next_true_" << i;
   for (int i = 0; i < 12; ++i) f << ",delta_mlp_" << i;
+  // v2 新增列
+  for (int i = 0; i < 12; ++i) f << ",x_true_" << i;
+  for (int i = 0; i < 12; ++i) f << ",x_next_nom_" << i;
   f << "\n";
   for (auto& row : training_rows_) f << row << "\n";
   f.close();
@@ -645,6 +698,98 @@ void ConvexMPC::writeTrainingData() {
   RCLCPP_INFO(nodeHandle_->get_logger(),
               "[TrainData] Saved %zu samples -> %s",
               training_rows_.size(), path.c_str());
+}
+
+// ─── 窗口数据采集 ──────────────────────────────────────────────
+void ConvexMPC::collectWindowData(const vector_t& x_now, const vector_t& delta0) {
+  if (window_data_written_) return;
+
+  const size_t N = solution_.size() - 1;
+  if (N == 0) return;
+
+  // 1. 处理上一窗口：填入 k=0 的 x_next_true = x_now（真实下一状态）
+  if (has_prev_window_) {
+    prev_window_buf_[0].x_next_true = x_now;
+
+    // 格式化并追加到 window_rows_
+    for (size_t k = 0; k < prev_window_buf_.size(); ++k) {
+      const auto& step = prev_window_buf_[k];
+      std::ostringstream oss;
+      oss << std::fixed << std::setprecision(6);
+      oss << window_count_ << "," << k;
+      for (int i = 0; i < 12; ++i) oss << "," << step.x_pred(i);
+      for (int i = 0; i < (int)step.u.size(); ++i) oss << "," << step.u(i);
+      for (int i = 0; i < 12; ++i) oss << "," << step.x_next_est(i);
+      for (int i = 0; i < 12; ++i) oss << "," << step.x_next_true(i);
+      window_rows_.push_back(oss.str());
+    }
+    window_count_++;
+
+    if (window_count_ % 100 == 0) {
+      RCLCPP_INFO(nodeHandle_->get_logger(),
+                  "[WindowData] Collected %d / %d windows (%zu rows)",
+                  window_count_, max_window_samples_, window_rows_.size());
+    }
+
+    if (window_count_ >= max_window_samples_) {
+      writeWindowData();
+      return;
+    }
+  }
+
+  // 2. 缓存当前窗口
+  prev_window_buf_.clear();
+  prev_window_buf_.reserve(N);
+  for (size_t k = 0; k < N; ++k) {
+    WindowStep step;
+    step.x_pred = solution_[k].x;
+    step.u = solution_[k].u;
+
+    // 名义预测（去除 delta0 / MLP 影响）
+    vector_t b_clean = ocp_[k].b;
+    if (k == 0 && !mlp_full_recursive_) {
+      b_clean -= delta0;  // Method C': 去除仅加在 b_0 上的 delta0
+    }
+    step.x_next_est = ocp_[k].A * solution_[k].x + ocp_[k].B * solution_[k].u + b_clean;
+
+    // k>=1 的 x_next_true 直接用 MPC 预测的下一步状态
+    // k=0 的 x_next_true 留空，等下一帧填入真实值
+    if (k + 1 <= N) {
+      step.x_next_true = solution_[k + 1].x;
+    }
+    prev_window_buf_.push_back(step);
+  }
+  has_prev_window_ = true;
+}
+
+void ConvexMPC::writeWindowData() {
+  if (window_data_written_ || window_rows_.empty()) return;
+
+  auto t = std::chrono::system_clock::now().time_since_epoch().count();
+  std::string dir = "/home/markwcl/mpc_data/with_mpc_windows/";
+
+  // 确保目录存在
+  std::string mkdir_cmd = "mkdir -p " + dir;
+  std::system(mkdir_cmd.c_str());
+
+  std::string path = dir + "window_data_" + std::to_string(t / 1000000000LL) + ".csv";
+
+  const int nu = prev_window_buf_.empty() ? 6 : (int)prev_window_buf_[0].u.size();
+  std::ofstream f(path);
+  f << "window_id,step_k";
+  for (int i = 0; i < 12; ++i) f << ",x_pred_" << i;
+  for (int i = 0; i < nu; ++i) f << ",u_" << i;
+  for (int i = 0; i < 12; ++i) f << ",x_next_est_" << i;
+  for (int i = 0; i < 12; ++i) f << ",x_next_true_" << i;
+  f << "\n";
+
+  for (const auto& row : window_rows_) f << row << "\n";
+  f.close();
+
+  window_data_written_ = true;
+  RCLCPP_INFO(nodeHandle_->get_logger(),
+              "[WindowData] Saved %d windows (%zu rows) -> %s",
+              window_count_, window_rows_.size(), path.c_str());
 }
 
 } // namespace clear

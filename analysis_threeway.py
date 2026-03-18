@@ -24,6 +24,8 @@ LABELS     = ["HPIPM",  "PMP",    "PMP+ML(C')"]
 CSV_PATHS  = [CSV_HPIPM, CSV_PMP, CSV_PMPML]
 COLORS     = ["#2196F3", "#FF9800", "#4CAF50"]   # blue / orange / green
 
+plt.rcParams['axes.grid'] = False
+
 # ─── 加载数据 ──────────────────────────────────────────────────────────────────
 def load_csv(path):
     df = pd.read_csv(path)
@@ -130,7 +132,7 @@ ax_ts.set_xlabel("Time (s)")
 ax_ts.set_ylabel("Solve time (ms)")
 ax_ts.set_title("(a) Solve time over time")
 ax_ts.legend(fontsize=9)
-ax_ts.grid(True, alpha=0.3)
+ax_ts.grid(visible=False, which='both')
 
 for label, df, color in zip(LABELS, dfs, COLORS):
     if df is None:
@@ -143,7 +145,7 @@ ax_cdf.set_xlabel("Solve time (ms)")
 ax_cdf.set_ylabel("CDF")
 ax_cdf.set_title("(b) Solve time CDF")
 ax_cdf.legend(fontsize=9)
-ax_cdf.grid(True, alpha=0.3)
+ax_cdf.grid(visible=False, which='both')
 ax_cdf.set_xlim(left=0)
 
 plt.tight_layout()
