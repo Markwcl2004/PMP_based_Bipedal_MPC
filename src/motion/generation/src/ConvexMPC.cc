@@ -7,6 +7,27 @@
 #include <sstream>
 #include <iomanip>
 #include <chrono>
+#include <filesystem>
+#include <ctime>
+
+// Helper: generate versioned eval path like eval/320_1/filename.csv
+static std::string getVersionedEvalPath(const std::string& base_dir, const std::string& filename) {
+    namespace fs = std::filesystem;
+    auto now = std::time(nullptr);
+    auto* tm = std::localtime(&now);
+    char date_buf[8];
+    std::snprintf(date_buf, sizeof(date_buf), "%d%02d", tm->tm_mon + 1, tm->tm_mday);
+    std::string date_str(date_buf);
+
+    fs::create_directories(base_dir);
+    int version = 1;
+    while (fs::exists(base_dir + "/" + date_str + "_" + std::to_string(version))) {
+        ++version;
+    }
+    std::string dir = base_dir + "/" + date_str + "_" + std::to_string(version);
+    fs::create_directories(dir);
+    return dir + "/" + filename;
+}
 
 namespace clear {
 
@@ -569,14 +590,15 @@ void ConvexMPC::evaluateAndExportMetrics(double t0, double dt, double solve_time
   static bool has_written_csv_ = false;
 
   if (!has_written_csv_ && t_now - time_prog_begin > 20.0) {
-    std::ofstream file("pmp_ml_eval_result.csv");
-    file << "timestamp,max_delta_u,avg_delta_u,max_tracking_error,avg_tracking_error,max_constraint_violation,solve_time_ms\n";
+    std::string eval_path = getVersionedEvalPath("/home/markwcl/MPC_ML/eval", "pmp_ml_eval_result.csv");
+    std::ofstream file(eval_path);
+    file << "timestamp,max_delta_u,avg_delta_u,max_tracking_error,avg_tracking_error,max_constraint_violation,solve_time_ms,err_pos_y,err_yaw\n";
     for (const auto& line : metrics_cache_) {
       file << line << "\n";
     }
     file.close();
     has_written_csv_ = true;
-    RCLCPP_INFO(nodeHandle_->get_logger(), "[Eval] CSV written: pmp_ml_eval_result.csv (%zu rows)", metrics_cache_.size());
+    RCLCPP_INFO(nodeHandle_->get_logger(), "[Eval] CSV written: %s (%zu rows)", eval_path.c_str(), metrics_cache_.size());
     return;
   }
   if (has_written_csv_) return;
@@ -591,16 +613,20 @@ void ConvexMPC::evaluateAndExportMetrics(double t0, double dt, double solve_time
   // Compute max/avg delta_u
   scalar_t max_delta_u = 0.0;
   scalar_t sum_delta_u = 0.0;
+  constexpr int nu_dim = 6;
   for (size_t k = 1; k < N; ++k) {
-    scalar_t du = (solution_[k].u - solution_[k-1].u).lpNorm<Eigen::Infinity>();
-    max_delta_u = std::max(max_delta_u, du);
-    sum_delta_u += du;
+    auto du_vec = (solution_[k].u - solution_[k-1].u).cwiseAbs();
+    max_delta_u = std::max(max_delta_u, du_vec.maxCoeff());
+    sum_delta_u += du_vec.sum() / nu_dim;  // L1 mean over 6 components
   }
   scalar_t avg_delta_u = (N > 1) ? sum_delta_u / (N - 1) : 0.0;
 
   // Compute tracking error (12D)
   scalar_t max_tracking_error = 0.0;
   scalar_t sum_tracking_error = 0.0;
+  scalar_t sum_err_pos_y = 0.0;
+  scalar_t sum_err_yaw = 0.0;
+  constexpr int nx_dim = 12;
   for (size_t k = 0; k <= N; ++k) {
     const scalar_t time_k = t0 + (k + 1) * dt;
     vector3_t rpy_des = rpy_traj->evaluate(time_k) - rpy_traj->evaluate(t0) + rpy_des_start;
@@ -609,11 +635,15 @@ void ConvexMPC::evaluateAndExportMetrics(double t0, double dt, double solve_time
     vector_t x_des(12);
     x_des << pos_traj->evaluate(time_k), v_des, rpy_des, omega_des;
 
-    scalar_t err = (solution_[k].x - x_des).lpNorm<Eigen::Infinity>();
-    max_tracking_error = std::max(max_tracking_error, err);
-    sum_tracking_error += err;
+    auto err_vec = (solution_[k].x - x_des).cwiseAbs();
+    max_tracking_error = std::max(max_tracking_error, err_vec.maxCoeff());
+    sum_tracking_error += err_vec.sum() / nx_dim;  // L1 mean over 12 components
+    sum_err_pos_y += err_vec(1);   // pos_y = index 1
+    sum_err_yaw += err_vec(8);     // yaw = index 8
   }
   scalar_t avg_tracking_error = sum_tracking_error / (N + 1);
+  scalar_t avg_err_pos_y = sum_err_pos_y / (N + 1);
+  scalar_t avg_err_yaw = sum_err_yaw / (N + 1);
 
   // Compute constraint violation
   scalar_t max_constraint_violation = 0.0;
@@ -632,7 +662,8 @@ void ConvexMPC::evaluateAndExportMetrics(double t0, double dt, double solve_time
       << max_delta_u << "," << avg_delta_u << ","
       << max_tracking_error << "," << avg_tracking_error << ","
       << max_constraint_violation << ","
-      << solve_time_ms;
+      << solve_time_ms << ","
+      << avg_err_pos_y << "," << avg_err_yaw;
   metrics_cache_.push_back(oss.str());
 }
 

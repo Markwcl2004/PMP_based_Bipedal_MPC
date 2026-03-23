@@ -80,7 +80,7 @@ generation:
   mlp_recursive_steps: 3           # 递归模式下 MLP 修正的步数（3 = 前3步）
   # mlp_v1_config: "/home/markwcl/MPC_ML/models/mlp_residual_model.yaml"  # 暂时禁用混合模式
   # mlp_v1_steps: 3
-  mlp_config: "/home/markwcl/MPC_ML/models/mlp_v3_round1.yaml"
+  mlp_config: "/home/markwcl/MPC_ML/models/mlp_v1_mse.yaml"
   mlp_residual_clamp: 0.05
   collect_training_data: false
   max_training_samples: 10000

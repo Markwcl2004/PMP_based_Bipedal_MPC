@@ -74,7 +74,7 @@ normalization:
 output_dim: 12
 residual_mode: true
 training:
-  best_val_loss: 0.23743644496425986
+  best_val_loss: 0.24979744432494044
   noise_augmentation:
     alpha: null
     enabled: false

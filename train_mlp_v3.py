@@ -567,6 +567,8 @@ def main():
     parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--weight-decay', type=float, default=1e-5)
     parser.add_argument('--early-stop-patience', type=int, default=20)
+    parser.add_argument('--loss', type=str, default='l1', choices=['mse', 'l1'],
+                        help='Loss function: mse or l1 (default: l1)')
     parser.add_argument('--analyze-only', action='store_true',
                         help='Only analyze data, skip training')
 
@@ -733,7 +735,12 @@ def main():
     print(f"Total parameters: {total_params:,}")
 
     # ---- 7. Training ----
-    criterion = nn.MSELoss()
+    if args.loss == 'l1':
+        criterion = nn.L1Loss()
+        print("Loss function: L1 (MAE)")
+    else:
+        criterion = nn.MSELoss()
+        print("Loss function: MSE")
     optimizer = optim.Adam(model.parameters(), lr=args.lr,
                            weight_decay=args.weight_decay)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
