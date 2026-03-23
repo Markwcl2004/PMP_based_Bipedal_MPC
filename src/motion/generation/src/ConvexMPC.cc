@@ -645,14 +645,21 @@ void ConvexMPC::evaluateAndExportMetrics(double t0, double dt, double solve_time
   scalar_t avg_err_pos_y = sum_err_pos_y / (N + 1);
   scalar_t avg_err_yaw = sum_err_yaw / (N + 1);
 
-  // Compute constraint violation
+  // Compute constraint violation (respecting masks)
   scalar_t max_constraint_violation = 0.0;
   for (size_t k = 0; k < N; ++k) {
     if (ocp_[k].C.size() == 0 || ocp_[k].D.size() == 0) continue;
     if (ocp_[k].ug.size() == 0) continue;
     vector_t gk = ocp_[k].C * solution_[k].x + ocp_[k].D * solution_[k].u;
+    // upper bound violation: only where ug_mask == 1
     vector_t delta_ug = (gk - ocp_[k].ug).cwiseMax(0.0);
-    scalar_t violation = delta_ug.maxCoeff();
+    if (ocp_[k].ug_mask.size() > 0)
+      delta_ug = delta_ug.cwiseProduct(ocp_[k].ug_mask.cast<double>());
+    // lower bound violation: only where lg_mask == 1
+    vector_t delta_lg = (ocp_[k].lg - gk).cwiseMax(0.0);
+    if (ocp_[k].lg_mask.size() > 0)
+      delta_lg = delta_lg.cwiseProduct(ocp_[k].lg_mask.cast<double>());
+    scalar_t violation = std::max(delta_ug.maxCoeff(), delta_lg.maxCoeff());
     max_constraint_violation = std::max(max_constraint_violation, violation);
   }
 

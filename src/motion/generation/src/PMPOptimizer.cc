@@ -183,6 +183,41 @@ void PMPOptimizer::updateControl(const vector_t& g) {
   for (size_t k = 0; k < N_; ++k) {
     stages_[k].u -= g.segment(k * nu_, nu_);
   }
+  // 约束投影：将 u 投影到摩擦锥可行域
+  projectConstraints();
+}
+
+void PMPOptimizer::projectConstraints() {
+  for (size_t k = 0; k < N_; ++k) {
+    if (ocp_[k].D.size() == 0 || ocp_[k].ug.size() == 0) continue;
+
+    const int nf = static_cast<int>(nu_) / 3;  // 脚数（2）
+
+    // 逐脚投影（每脚3维力，5个约束）
+    for (int i = 0; i < nf; ++i) {
+      double Fx = stages_[k].u(3 * i);
+      double Fy = stages_[k].u(3 * i + 1);
+      double Fz = stages_[k].u(3 * i + 2);
+
+      // 法向力上限
+      double Fz_max = ocp_[k].ug(5 * i + 4);
+      Fz = std::min(Fz, Fz_max);
+
+      // 法向力非负
+      Fz = std::max(Fz, 0.0);
+
+      // 摩擦锥投影：|Fx| <= mu * Fz, |Fy| <= mu * Fz
+      double mu = 1.0 / (ocp_[k].D(5 * i, 0));  // D(0,0) = 1/mu_，所以 mu = mu_
+      double Fx_lim = mu * Fz;
+      double Fy_lim = mu * Fz;
+      Fx = std::clamp(Fx, -Fx_lim, Fx_lim);
+      Fy = std::clamp(Fy, -Fy_lim, Fy_lim);
+
+      stages_[k].u(3 * i)     = Fx;
+      stages_[k].u(3 * i + 1) = Fy;
+      stages_[k].u(3 * i + 2) = Fz;
+    }
+  }
 }
 
 // ============================================================

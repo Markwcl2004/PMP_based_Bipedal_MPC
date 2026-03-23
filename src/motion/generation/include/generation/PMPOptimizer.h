@@ -73,6 +73,7 @@ class PMPOptimizer {
 
   vector_t superlinearUpdate(const vector_t& grad, const matrix_t& hess);
   void updateControl(const vector_t& g);
+  void projectConstraints();
 
   std::vector<OcpStage> ocp_;
   std::vector<PMPStageData> stages_;
