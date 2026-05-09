@@ -5,7 +5,7 @@
 
 用法：
     cd /home/markwcl/MPC_ML
-    python3 analysis_0323_mse_v1.py
+    python3 analysis_fixed_mse_v1.py
 """
 
 import pandas as pd
@@ -14,9 +14,42 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 # ─── 数据文件路径 ──────────────────────────────────────────────────────────────
-HPIPM_CSVS = [f"/home/markwcl/Bipedal_MPC/eval/324_{i}/hpipm_eval_result.csv" for i in range(1, 11)]
-PMP_CSVS   = [f"/home/markwcl/My_MPC/eval/324_{i}/pmp_eval_result.csv" for i in range(1, 11)]
-PMPML_CSVS = [f"/home/markwcl/MPC_ML/eval/324_{i}/pmp_ml_eval_result.csv" for i in range(1, 11)]
+HPIPM_CSVS = [
+    "/home/markwcl/Bipedal_MPC/eval/509_1/hpipm_eval_result.csv",
+    "/home/markwcl/Bipedal_MPC/eval/509_2/hpipm_eval_result.csv",
+    "/home/markwcl/Bipedal_MPC/eval/509_3/hpipm_eval_result.csv",
+    "/home/markwcl/Bipedal_MPC/eval/509_4/hpipm_eval_result.csv",
+    "/home/markwcl/Bipedal_MPC/eval/509_5/hpipm_eval_result.csv",
+    "/home/markwcl/Bipedal_MPC/eval/510_1/hpipm_eval_result.csv",
+    "/home/markwcl/Bipedal_MPC/eval/510_2/hpipm_eval_result.csv",
+    "/home/markwcl/Bipedal_MPC/eval/510_3/hpipm_eval_result.csv",
+    "/home/markwcl/Bipedal_MPC/eval/510_4/hpipm_eval_result.csv",
+    "/home/markwcl/Bipedal_MPC/eval/510_5/hpipm_eval_result.csv"
+]
+PMP_CSVS = [
+    "/home/markwcl/My_MPC/eval/509_1/pmp_eval_result.csv",
+    "/home/markwcl/My_MPC/eval/509_2/pmp_eval_result.csv",
+    "/home/markwcl/My_MPC/eval/509_3/pmp_eval_result.csv",
+    "/home/markwcl/My_MPC/eval/509_4/pmp_eval_result.csv",
+    "/home/markwcl/My_MPC/eval/510_1/pmp_eval_result.csv",
+    "/home/markwcl/My_MPC/eval/510_2/pmp_eval_result.csv",
+    "/home/markwcl/My_MPC/eval/510_3/pmp_eval_result.csv",
+    "/home/markwcl/My_MPC/eval/510_4/pmp_eval_result.csv",
+    "/home/markwcl/My_MPC/eval/510_5/pmp_eval_result.csv",
+    "/home/markwcl/My_MPC/eval/510_6/pmp_eval_result.csv"
+]
+PMPML_CSVS = [
+    "/home/markwcl/MPC_ML/eval/510_1/pmp_ml_eval_result.csv",
+    "/home/markwcl/MPC_ML/eval/510_2/pmp_ml_eval_result.csv",
+    "/home/markwcl/MPC_ML/eval/510_3/pmp_ml_eval_result.csv",
+    "/home/markwcl/MPC_ML/eval/510_4/pmp_ml_eval_result.csv",
+    "/home/markwcl/MPC_ML/eval/510_5/pmp_ml_eval_result.csv",
+    "/home/markwcl/MPC_ML/eval/510_6/pmp_ml_eval_result.csv",
+    "/home/markwcl/MPC_ML/eval/510_7/pmp_ml_eval_result.csv",
+    "/home/markwcl/MPC_ML/eval/510_8/pmp_ml_eval_result.csv",
+    "/home/markwcl/MPC_ML/eval/510_9/pmp_ml_eval_result.csv",
+    "/home/markwcl/MPC_ML/eval/510_10/pmp_ml_eval_result.csv"
+]
 
 OUT_DIR = Path("/home/markwcl/MPC_ML/img")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -50,7 +83,7 @@ for label, csvs in zip(LABELS, ALL_CSVS):
 
 # ─── 图1：pos_y 和 yaw 时序对比（核心图）────────────────────────────────────────
 fig, axes = plt.subplots(2, 1, figsize=(14, 8))
-fig.suptitle("Lateral Tracking: pos_y Error & yaw Error\n(3 runs averaged, MSE-trained MLP, recursive 3 steps)",
+fig.suptitle("Lateral Tracking: pos_y Error & yaw Error\n(10 runs averaged, MSE-trained MLP, recursive 3 steps)",
              fontsize=13, fontweight="bold")
 
 for ax, col, ylabel, title in zip(
@@ -81,7 +114,7 @@ for ax, col, ylabel, title in zip(
     ax.grid(True, alpha=0.2)
 
 plt.tight_layout()
-out1 = OUT_DIR / "0323_lateral_tracking.png"
+out1 = OUT_DIR / "fixed_lateral_tracking.png"
 plt.savefig(out1, dpi=200, bbox_inches="tight")
 print(f"[saved] {out1}")
 plt.close()
@@ -118,7 +151,7 @@ ax.grid(True, axis="y", alpha=0.2, linestyle="--")
 ax.set_ylim(bottom=0)
 
 plt.tight_layout()
-out2 = OUT_DIR / "0323_posy_percentiles.png"
+out2 = OUT_DIR / "fixed_posy_percentiles.png"
 plt.savefig(out2, dpi=200, bbox_inches="tight")
 print(f"[saved] {out2}")
 plt.close()
@@ -170,7 +203,7 @@ for ax, (col, ylabel, stat, fmt, lower_better) in zip(axes.flat, bar_metrics):
     ax.tick_params(axis="x", labelsize=8.5)
 
 plt.tight_layout()
-out3 = OUT_DIR / "0323_summary_6panel.png"
+out3 = OUT_DIR / "fixed_summary_6panel.png"
 plt.savefig(out3, dpi=200, bbox_inches="tight")
 print(f"[saved] {out3}")
 plt.close()
@@ -197,14 +230,14 @@ for ax, col, ylabel in zip(axes,
         ax.text(i + 1, med, f"  {med:.4f}", va="center", fontsize=8, color="black")
 
 plt.tight_layout()
-out4 = OUT_DIR / "0323_lateral_boxplot.png"
+out4 = OUT_DIR / "fixed_lateral_boxplot.png"
 plt.savefig(out4, dpi=200, bbox_inches="tight")
 print(f"[saved] {out4}")
 plt.close()
 
 # ─── 图5：avg_tracking 和 max_tracking 时序 ─────────────────────────────────
 fig, axes = plt.subplots(2, 1, figsize=(14, 8))
-fig.suptitle("Tracking Error Over Time\n(3 runs averaged)", fontsize=13, fontweight="bold")
+fig.suptitle("Tracking Error Over Time\n(10 runs averaged)", fontsize=13, fontweight="bold")
 
 for ax, col, ylabel, title in zip(
     axes,
@@ -232,7 +265,7 @@ for ax, col, ylabel, title in zip(
     ax.grid(True, alpha=0.2)
 
 plt.tight_layout()
-out5 = OUT_DIR / "0323_tracking_timeseries.png"
+out5 = OUT_DIR / "fixed_tracking_timeseries.png"
 plt.savefig(out5, dpi=200, bbox_inches="tight")
 print(f"[saved] {out5}")
 plt.close()

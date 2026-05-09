@@ -207,7 +207,7 @@ void PMPOptimizer::projectConstraints() {
       Fz = std::max(Fz, 0.0);
 
       // 摩擦锥投影：|Fx| <= mu * Fz, |Fy| <= mu * Fz
-      double mu = 1.0 / (ocp_[k].D(5 * i, 0));  // D(0,0) = 1/mu_，所以 mu = mu_
+      double mu = 1.0 / (ocp_[k].D(5 * i, 3 * i));  // D(0,0) = 1/mu_，所以 mu = mu_
       double Fx_lim = mu * Fz;
       double Fy_lim = mu * Fz;
       Fx = std::clamp(Fx, -Fx_lim, Fx_lim);
