@@ -14,9 +14,9 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 # ─── 数据文件路径 ──────────────────────────────────────────────────────────────
-HPIPM_CSVS = [f"/home/markwcl/Bipedal_MPC/eval/320_{i}/hpipm_eval_result.csv" for i in range(4, 7)]
-PMP_CSVS   = [f"/home/markwcl/My_MPC/eval/320_{i}/pmp_eval_result.csv" for i in range(4, 7)]
-PMPML_CSVS = [f"/home/markwcl/MPC_ML/eval/320_{i}/pmp_ml_eval_result.csv" for i in range(4, 7)]
+HPIPM_CSVS = [f"/home/markwcl/Bipedal_MPC/eval/324_{i}/hpipm_eval_result.csv" for i in range(1, 11)]
+PMP_CSVS   = [f"/home/markwcl/My_MPC/eval/324_{i}/pmp_eval_result.csv" for i in range(1, 11)]
+PMPML_CSVS = [f"/home/markwcl/MPC_ML/eval/324_{i}/pmp_ml_eval_result.csv" for i in range(1, 11)]
 
 OUT_DIR = Path("/home/markwcl/MPC_ML/img")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -125,8 +125,8 @@ plt.close()
 
 # ─── 图3：综合 bar chart（给导师看的总览图）──────────────────────────────────────
 fig, axes = plt.subplots(2, 3, figsize=(16, 9))
-fig.suptitle("Three-way Comparison: HPIPM vs PMP vs PMP+MLP (MSE v1)\n"
-             "(3 runs × 20s each, eval 320_4~320_6)",
+fig.suptitle("Three-way Comparison: HPIPM vs PMP vs PMP+MLP\n"
+             "(10 runs × 20s each)",
              fontsize=12, fontweight="bold", y=1.02)
 
 bar_metrics = [
@@ -134,8 +134,8 @@ bar_metrics = [
     ("err_pos_y",          "Lateral Error (pos_y)", "mean", ".4f", True),
     ("err_yaw",            "Heading Error (yaw)", "mean", ".4f", True),
     ("avg_delta_u",        "Avg Control Variation (N)", "p99", ".2f", True),
-    ("max_constraint_violation", "Constraint Viol. (N)", "p99", ".1f", True),
-    ("solve_time_ms",      "Solve Time (ms)", "mean", ".2f", False),
+    ("max_tracking_error",       "Max Tracking Error", "mean", ".4f", True),
+    ("solve_time_ms",      "Solve Time (ms)", "mean", ".2f", True),
 ]
 
 for ax, (col, ylabel, stat, fmt, lower_better) in zip(axes.flat, bar_metrics):
@@ -155,8 +155,8 @@ for ax, (col, ylabel, stat, fmt, lower_better) in zip(axes.flat, bar_metrics):
     ref, ml = means[0], means[2]
     pct = (ml - ref) / ref * 100
     sign = "+" if pct > 0 else ""
-    color_ann = "green" if (lower_better and pct < 0) else \
-                ("red" if lower_better and pct > 0 else "gray")
+    improved = (lower_better and pct < 0) or (not lower_better and pct > 0)
+    color_ann = "red" if improved else "gray"
     ax.text(2, means[2] * 0.5,
             f"{sign}{pct:.1f}%\nvs HPIPM",
             ha="center", va="center", fontsize=8,

@@ -6,3 +6,9 @@ __pycache__/
 .tmp_pdfimgs/
 .comparison_regen.txt
 *.pdf
+# Archived non-src clutter (added 2026-05-09)
+_archive/
+paper_archive/
+__pycache__/
+*.pyc
+*.pdfcheck/
