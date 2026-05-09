@@ -12,3 +12,6 @@ paper_archive/
 __pycache__/
 *.pyc
 *.pdfcheck/
+
+# Local Overleaf sync mirror (not tracked)
+paper/
