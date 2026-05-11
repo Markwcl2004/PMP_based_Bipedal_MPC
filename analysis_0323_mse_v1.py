@@ -167,11 +167,46 @@ bar_metrics = [
     ("err_pos_y",          "Lateral Error (pos_y)", "mean", ".4f", True),
     ("err_yaw",            "Heading Error (yaw)", "mean", ".4f", True),
     ("avg_delta_u",        "Avg Control Variation (N)", "p99", ".2f", True),
-    ("max_tracking_error",       "Max Tracking Error", "mean", ".4f", True),
+    None,  # panel (e): startup pass rate, fixed-100-trial check (n=100, not 10-run stat)
     ("solve_time_ms",      "Solve Time (ms)", "mean", ".2f", True),
 ]
 
-for ax, (col, ylabel, stat, fmt, lower_better) in zip(axes.flat, bar_metrics):
+# Init stability data: fixed-100-trial startup check (max e^infty < 5 in first 1s)
+# Wilson 95% CI computed from n=100 binomial counts (48/100, 59/100, 97/100).
+startup_rates    = np.array([48.0, 59.0, 97.0])
+startup_counts   = ["48/100", "59/100", "97/100"]
+startup_ci_low   = np.array([38.5, 49.2, 91.5])
+startup_ci_high  = np.array([57.7, 68.1, 99.0])
+startup_yerr     = np.vstack([startup_rates - startup_ci_low,
+                              startup_ci_high - startup_rates])
+
+for panel_idx, (ax, metric) in enumerate(zip(axes.flat, bar_metrics)):
+    panel_letter = chr(ord("a") + panel_idx)
+    ax.text(-0.10, 1.04, f"({panel_letter})", transform=ax.transAxes,
+            fontsize=11, fontweight="bold", va="bottom", ha="left")
+    if metric is None:
+        bars = ax.bar(LABELS, startup_rates, color=COLORS, alpha=0.85,
+                      edgecolor="black", linewidth=0.8,
+                      yerr=startup_yerr, capsize=4,
+                      error_kw=dict(linewidth=1.0, capthick=1.0))
+        for bar, label in zip(bars, startup_counts):
+            ax.text(bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + 2.0,
+                    label, ha="center", va="bottom",
+                    fontsize=8.5, fontweight="bold")
+        ax.text(2, startup_rates[2] * 0.5,
+                "+49 pp\nvs HPIPM",
+                ha="center", va="center", fontsize=8,
+                color="red", fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="red", alpha=0.8))
+        ax.set_ylabel("Startup pass rate (%)", fontsize=9)
+        ax.set_title("Startup Pass Rate (100 trials)", fontsize=10, fontweight="bold", pad=8)
+        ax.set_ylim(0, 110)
+        ax.grid(True, axis="y", alpha=0.2, linestyle="--")
+        ax.tick_params(axis="x", labelsize=8.5)
+        continue
+
+    col, ylabel, stat, fmt, lower_better = metric
     fn = stat_fns.get(stat, np.mean)
     means = [fn(all_merged[l][col].values) for l in LABELS]
 

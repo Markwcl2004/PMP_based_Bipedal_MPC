@@ -15,3 +15,7 @@ __pycache__/
 
 # Local Overleaf sync mirror (not tracked)
 paper/
+
+# init stability 100-trial raw logs (keep summary CSV only)
+eval/init_stability_100trial/*.log
+scripts/__pycache__/
