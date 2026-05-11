@@ -86,3 +86,7 @@ generation:
   max_training_samples: 10000
   collect_window_data: false
   max_window_samples: 5000
+  use_augmented_lagrangian: true
+  al_rho: 1.0e-2
+  al_outer_iters: 1
+  al_final_projection_safety: true
