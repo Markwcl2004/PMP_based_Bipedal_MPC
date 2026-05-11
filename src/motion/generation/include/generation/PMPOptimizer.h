@@ -65,6 +65,15 @@ class PMPOptimizer {
                     int outer_iters,
                     bool final_projection_safety,
                     double active_threshold);
+  // B3 Fix A (codex full-review V2): true AL warm-start. ConvexMPC owns the
+  // persistent ν containers and hands them in before each solve(); after
+  // solve() the caller fetches the updated ν back via getALMultipliers().
+  // Without this, every tick rebuilds optimizer and ν is reset to 0 → only
+  // a one-shot penalty, not a real Augmented-Lagrangian outer iteration.
+  void setALMultipliers(const std::vector<vector_t>& nu_upper,
+                        const std::vector<vector_t>& nu_lower);
+  void getALMultipliers(std::vector<vector_t>& nu_upper,
+                        std::vector<vector_t>& nu_lower) const;
   bool solve(std::vector<OcpSolution>& solution_out);
 
  private:

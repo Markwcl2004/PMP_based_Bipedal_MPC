@@ -32,6 +32,24 @@ void PMPOptimizer::setALOptions(double rho,
   al_active_threshold_ = active_threshold;
 }
 
+// B3 Fix A: replace the per-tick reset multipliers with caller-owned state.
+// ConvexMPC keeps al_nu_*_state_ across MPC ticks; calling this before solve()
+// lets us warm-start the AL penalty from the previous tick's ν, which is the
+// defining feature of a real Augmented-Lagrangian update.
+void PMPOptimizer::setALMultipliers(const std::vector<vector_t>& nu_upper,
+                                    const std::vector<vector_t>& nu_lower) {
+  al_nu_upper_ = nu_upper;
+  al_nu_lower_ = nu_lower;
+}
+
+// B3 Fix A: fetch the multipliers updated by updateALMultipliers() so the
+// caller can store them for the next tick. Performs a deep copy.
+void PMPOptimizer::getALMultipliers(std::vector<vector_t>& nu_upper,
+                                    std::vector<vector_t>& nu_lower) const {
+  nu_upper = al_nu_upper_;
+  nu_lower = al_nu_lower_;
+}
+
 void PMPOptimizer::setWarmStart(const std::vector<OcpSolution>& prev_solution) {
   size_t prev_N = prev_solution.size() - 1;
   if (prev_N == 0 || prev_N != N_) {

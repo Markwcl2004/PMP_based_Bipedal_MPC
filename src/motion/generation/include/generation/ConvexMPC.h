@@ -104,6 +104,12 @@ private:
   int al_outer_iters_ = 1;
   bool al_final_projection_safety_ = true;
   double al_active_threshold_ = 0.0;
+  // B3 Fix A (codex full-review V2): persistent AL multipliers across MPC
+  // ticks. Without this, every tick rebuilds the optimizer and ν is reset to
+  // 0, degrading the update to a one-shot penalty rather than a true AL
+  // outer iteration. Owned here, handed to PMPOptimizer per tick.
+  std::vector<vector_t> al_nu_upper_state_;
+  std::vector<vector_t> al_nu_lower_state_;
 
   // 训练数据采集
   bool collect_training_data_ = false;

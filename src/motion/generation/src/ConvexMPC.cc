@@ -463,6 +463,13 @@ void ConvexMPC::optimize() {
                          al_outer_iters_,
                          al_final_projection_safety_,
                          al_active_threshold_);
+  // B3 Fix A: hand the persistent ν containers to the optimizer so the AL
+  // penalty warm-starts from the previous tick's multipliers (rather than
+  // resetting to zero every tick). After solve() returns, fetch the updated
+  // ν back so the next tick continues from there.
+  if (use_augmented_lagrangian_) {
+    optimizer.setALMultipliers(al_nu_upper_state_, al_nu_lower_state_);
+  }
 
   // 全递归 MLP：在 forwardSimulate 每步调用 MLP 修正动力学
   // 混合模式：前 v1_steps 步用 v1，之后用 v2
@@ -496,6 +503,14 @@ void ConvexMPC::optimize() {
   if (optimizer.solve(solution_)) {
     auto end_time = std::chrono::high_resolution_clock::now();
     double solve_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
+
+    // B3 Fix A: pull the updated AL multipliers back out so the next MPC tick
+    // continues from them. This is what makes the implementation a real
+    // Augmented-Lagrangian outer iteration across ticks, not a single-shot
+    // penalty.
+    if (use_augmented_lagrangian_) {
+      optimizer.getALMultipliers(al_nu_upper_state_, al_nu_lower_state_);
+    }
 
     // 每步都更新 prev_u_ / has_prev_data_，方案 C 需要上一步控制量
     // 注意：此更新必须独立于 collect_training_data_，否则 use_mlp_residual_ 时
