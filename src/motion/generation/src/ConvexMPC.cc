@@ -9,6 +9,9 @@
 #include <chrono>
 #include <filesystem>
 #include <ctime>
+#include <algorithm>
+#include <cmath>
+#include <iostream>
 
 // Helper: generate versioned eval path like eval/320_1/filename.csv
 static std::string getVersionedEvalPath(const std::string& base_dir, const std::string& filename) {
@@ -30,6 +33,45 @@ static std::string getVersionedEvalPath(const std::string& base_dir, const std::
 }
 
 namespace clear {
+
+namespace {
+
+void shiftALMultipliers(std::vector<vector_t>& nu_state, size_t horizon) {
+  if (nu_state.empty()) return;
+  if (nu_state.size() != horizon) {
+    nu_state.clear();
+    return;
+  }
+  for (size_t k = 0; k + 1 < nu_state.size(); ++k) {
+    nu_state[k] = nu_state[k + 1];
+  }
+  nu_state.back().resize(0);
+}
+
+void logALDiagnostics(const std::vector<vector_t>& nu_upper,
+                      const std::vector<vector_t>& nu_lower,
+                      size_t tick) {
+  double nu_inf = 0.0;
+  size_t active_rows = 0;
+  const auto accumulate = [&](const std::vector<vector_t>& nu_state) {
+    for (const auto& nu : nu_state) {
+      for (int i = 0; i < nu.size(); ++i) {
+        const double value = std::abs(nu(i));
+        nu_inf = std::max(nu_inf, value);
+        if (value > 1.0e-12) {
+          ++active_rows;
+        }
+      }
+    }
+  };
+  accumulate(nu_upper);
+  accumulate(nu_lower);
+  std::cout << "[ConvexMPC][AL] tick=" << tick
+            << " nu_inf=" << nu_inf
+            << " active_rows=" << active_rows << std::endl;
+}
+
+}  // namespace
 
 // std::vector<OcpStage> pmp_ocp_;
 // std::vector<OcpSolution> pmp_solution_;
@@ -463,12 +505,15 @@ void ConvexMPC::optimize() {
                          al_outer_iters_,
                          al_final_projection_safety_,
                          al_active_threshold_);
-  // B3 Fix A: hand the persistent ν containers to the optimizer so the AL
-  // penalty warm-starts from the previous tick's multipliers (rather than
-  // resetting to zero every tick). After solve() returns, fetch the updated
-  // ν back so the next tick continues from there.
+  // B3 Fix B: shift ν with the receding horizon before handing it to the
+  // one-tick optimizer, matching the control warm-start shift. Shift a local
+  // copy so a failed solve does not corrupt the persistent state.
   if (use_augmented_lagrangian_) {
-    optimizer.setALMultipliers(al_nu_upper_state_, al_nu_lower_state_);
+    auto al_nu_upper_for_solve = al_nu_upper_state_;
+    auto al_nu_lower_for_solve = al_nu_lower_state_;
+    shiftALMultipliers(al_nu_upper_for_solve, N);
+    shiftALMultipliers(al_nu_lower_for_solve, N);
+    optimizer.setALMultipliers(al_nu_upper_for_solve, al_nu_lower_for_solve);
   }
 
   // 全递归 MLP：在 forwardSimulate 每步调用 MLP 修正动力学
@@ -510,6 +555,10 @@ void ConvexMPC::optimize() {
     // penalty.
     if (use_augmented_lagrangian_) {
       optimizer.getALMultipliers(al_nu_upper_state_, al_nu_lower_state_);
+      ++al_diag_tick_;
+      if (al_diag_tick_ % 100 == 0) {
+        logALDiagnostics(al_nu_upper_state_, al_nu_lower_state_, al_diag_tick_);
+      }
     }
 
     // 每步都更新 prev_u_ / has_prev_data_，方案 C 需要上一步控制量

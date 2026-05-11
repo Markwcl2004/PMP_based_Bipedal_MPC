@@ -110,6 +110,7 @@ private:
   // outer iteration. Owned here, handed to PMPOptimizer per tick.
   std::vector<vector_t> al_nu_upper_state_;
   std::vector<vector_t> al_nu_lower_state_;
+  size_t al_diag_tick_ = 0;
 
   // 训练数据采集
   bool collect_training_data_ = false;

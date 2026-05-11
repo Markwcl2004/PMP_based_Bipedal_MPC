@@ -213,14 +213,14 @@ vector_t PMPOptimizer::superlinearUpdate(const vector_t& grad, const matrix_t& h
   return g;
 }
 
-void PMPOptimizer::updateControl(const vector_t& g) {
+void PMPOptimizer::updateControl(const vector_t& g, bool project_after_update) {
   for (size_t k = 0; k < N_; ++k) {
     stages_[k].u -= g.segment(k * nu_, nu_);
   }
   // B3 AL-full: in AL mode the projection is opt-in safety. The penalty term
   // already nudges u away from infeasible regions; the final clip is retained
   // by default (al_final_projection_safety_=true) until benchmark gates pass.
-  if (!use_augmented_lagrangian_ || al_final_projection_safety_) {
+  if (project_after_update && (!use_augmented_lagrangian_ || al_final_projection_safety_)) {
     projectConstraints();
   }
 }
@@ -411,15 +411,19 @@ bool PMPOptimizer::solve(std::vector<OcpSolution>& solution_out) {
   // ⑥ 超线性更新
   vector_t update = superlinearUpdate(grad, hess);
 
-  // ⑦ 更新控制量 (projection retained as safety in AL mode by default)
-  updateControl(update);
+  // ⑦ 更新控制量. In AL mode, defer projection until after the multiplier
+  // update so ν sees the raw post-Newton constraint residual.
+  updateControl(update, !use_augmented_lagrangian_);
 
   // B3 AL-full outer iterations: optional extra (gradient+penalty rebuild,
   // solve, multiplier update) cycles inside this MPC tick. al_outer_iters_=1
   // is the default; bigger values harden constraint feasibility per tick at
   // the cost of solve time.
   if (use_augmented_lagrangian_) {
-    updateALMultipliers();  // first multiplier bump after primary solve
+    updateALMultipliers();  // first multiplier bump on raw post-Newton u
+    if (al_final_projection_safety_) {
+      projectConstraints();
+    }
     for (int outer = 1; outer < al_outer_iters_; ++outer) {
       forwardSimulate();
       backwardCostate();
@@ -428,8 +432,11 @@ bool PMPOptimizer::solve(std::vector<OcpSolution>& solution_out) {
       matrix_t hess_outer = computeHessian();
       addAugmentedLagrangianPenalty(grad_outer, hess_outer);
       vector_t upd_outer = superlinearUpdate(grad_outer, hess_outer);
-      updateControl(upd_outer);
+      updateControl(upd_outer, false);
       updateALMultipliers();
+      if (al_final_projection_safety_) {
+        projectConstraints();
+      }
     }
   }
 

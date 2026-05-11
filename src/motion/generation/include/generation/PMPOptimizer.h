@@ -91,7 +91,7 @@ class PMPOptimizer {
   // matrix_t computeHessian();
 
   vector_t superlinearUpdate(const vector_t& grad, const matrix_t& hess);
-  void updateControl(const vector_t& g);
+  void updateControl(const vector_t& g, bool project_after_update = true);
   void projectConstraints();
 
   // B3 AL-full helpers.
