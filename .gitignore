@@ -19,3 +19,5 @@ paper/
 # init stability 100-trial raw logs (keep summary CSV only)
 eval/init_stability_100trial/*.log
 scripts/__pycache__/
+eval/
+MUJOCO_LOG.TXT
