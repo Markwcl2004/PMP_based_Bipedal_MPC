@@ -89,6 +89,26 @@ ConvexMPC::ConvexMPC(Node::SharedPtr nodeHandle,
   if (config_["generation"]["mlp_recursive_steps"]) {
     mlp_recursive_steps_ = config_["generation"]["mlp_recursive_steps"].as<int>(-1);
   }
+
+  // B3 AL-full: opt-in augmented-Lagrangian friction-constraint penalty.
+  if (config_["generation"]["use_augmented_lagrangian"]) {
+    use_augmented_lagrangian_ =
+        config_["generation"]["use_augmented_lagrangian"].as<bool>(false);
+  }
+  if (config_["generation"]["al_rho"]) {
+    al_rho_ = config_["generation"]["al_rho"].as<double>(1.0e-2);
+  }
+  if (config_["generation"]["al_outer_iters"]) {
+    al_outer_iters_ = config_["generation"]["al_outer_iters"].as<int>(1);
+  }
+  if (config_["generation"]["al_final_projection_safety"]) {
+    al_final_projection_safety_ =
+        config_["generation"]["al_final_projection_safety"].as<bool>(true);
+  }
+  if (config_["generation"]["al_active_threshold"]) {
+    al_active_threshold_ =
+        config_["generation"]["al_active_threshold"].as<double>(0.0);
+  }
   if (config_["generation"]["mlp_config"]) {
     std::string mlp_config_path = config_["generation"]["mlp_config"].as<std::string>("");
     if (!mlp_config_path.empty()) {
@@ -437,6 +457,12 @@ void ConvexMPC::optimize() {
   if (!solution_.empty()) {
     optimizer.setWarmStart(solution_);
   }
+  // B3 AL-full: wire augmented-Lagrangian options (no-op when flag off).
+  optimizer.setUseAugmentedLagrangian(use_augmented_lagrangian_);
+  optimizer.setALOptions(al_rho_,
+                         al_outer_iters_,
+                         al_final_projection_safety_,
+                         al_active_threshold_);
 
   // 全递归 MLP：在 forwardSimulate 每步调用 MLP 修正动力学
   // 混合模式：前 v1_steps 步用 v1，之后用 v2

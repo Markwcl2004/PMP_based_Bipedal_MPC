@@ -1,6 +1,7 @@
 // PMPOptimizer.cc - Pontryagin-based optimizer (FBDE + superlinear iteration)
 
 #include "generation/PMPOptimizer.h"
+#include <algorithm>
 #include <iostream>
 
 namespace clear {
@@ -14,6 +15,21 @@ void PMPOptimizer::setInitialState(const vector_t& x0) {
 
 void PMPOptimizer::setResidualCallback(ResidualFn fn) {
   residual_fn_ = std::move(fn);
+}
+
+// B3 AL-full (codex collapse-review verdict V2): configure augmented-Lagrangian
+// penalty knobs. Constraints enter the PMP Newton system through:
+//   gradient += D^T η          where  η = [ν + ρ c(u)]_+
+//   Hessian  += ρ D_A^T D_A    on the active rows (η > active_threshold)
+// Multipliers ν are persisted across MPC ticks and updated post-solve.
+void PMPOptimizer::setALOptions(double rho,
+                                int outer_iters,
+                                bool final_projection_safety,
+                                double active_threshold) {
+  al_rho_ = std::max(0.0, rho);
+  al_outer_iters_ = std::max(1, outer_iters);
+  al_final_projection_safety_ = final_projection_safety;
+  al_active_threshold_ = active_threshold;
 }
 
 void PMPOptimizer::setWarmStart(const std::vector<OcpSolution>& prev_solution) {
@@ -183,8 +199,121 @@ void PMPOptimizer::updateControl(const vector_t& g) {
   for (size_t k = 0; k < N_; ++k) {
     stages_[k].u -= g.segment(k * nu_, nu_);
   }
-  // 约束投影：将 u 投影到摩擦锥可行域
-  projectConstraints();
+  // B3 AL-full: in AL mode the projection is opt-in safety. The penalty term
+  // already nudges u away from infeasible regions; the final clip is retained
+  // by default (al_final_projection_safety_=true) until benchmark gates pass.
+  if (!use_augmented_lagrangian_ || al_final_projection_safety_) {
+    projectConstraints();
+  }
+}
+
+// ============================================================
+// B3 AL-full: inject augmented-Lagrangian penalty into the gradient and the
+// block-diagonal of the Hessian. For each stage k and constraint row j:
+//   c_{k,j}^{up}(u) =  D_{k,j} u_k - ug_{k,j}      (upper bound row)
+//   c_{k,j}^{lo}(u) =  lg_{k,j} - D_{k,j} u_k      (lower bound row)
+// AL multiplier:
+//   η_{k,j}^{up}  = max(0, ν_{k,j}^{up}  + ρ c_{k,j}^{up})
+//   η_{k,j}^{lo}  = max(0, ν_{k,j}^{lo}  + ρ c_{k,j}^{lo})
+// Gradient contribution (added to ∂J/∂u_k):
+//   g_k +=  D_{k,j}^T  · η_{k,j}^{up}
+//   g_k += -D_{k,j}^T  · η_{k,j}^{lo}
+// Hessian contribution (only on active rows, gauss-newton style):
+//   H_kk += ρ · D_A^T D_A
+// where the active row set A = {j : η > al_active_threshold_}.
+// ============================================================
+void PMPOptimizer::addAugmentedLagrangianPenalty(vector_t& grad, matrix_t& hess) {
+  // Ensure multiplier vectors are allocated (lazy init keeps regression-safe
+  // path zero-cost when flag is off).
+  if (al_nu_upper_.size() != N_) {
+    al_nu_upper_.assign(N_, vector_t());
+    al_nu_lower_.assign(N_, vector_t());
+  }
+
+  for (size_t k = 0; k < N_; ++k) {
+    const auto& stage = ocp_[k];
+    if (stage.D.size() == 0) continue;
+
+    const int m = static_cast<int>(stage.D.rows());
+    const vector_t& u = stages_[k].u;
+
+    // Lazy-init multipliers to size m if needed.
+    if (al_nu_upper_[k].size() != m) al_nu_upper_[k] = vector_t::Zero(m);
+    if (al_nu_lower_[k].size() != m) al_nu_lower_[k] = vector_t::Zero(m);
+
+    const vector_t Du = stage.D * u;  // m-vector
+
+    for (int j = 0; j < m; ++j) {
+      const vector_t drow = stage.D.row(j).transpose();  // nu
+
+      // Upper bound: c_up = D_j u - ug_j <= 0
+      const bool has_upper =
+          stage.ug.size() == m &&
+          (stage.ug_mask.size() != m || stage.ug_mask(j) != 0);
+      if (has_upper) {
+        const double c_up = Du(j) - stage.ug(j);
+        const double eta_up = std::max(0.0, al_nu_upper_[k](j) + al_rho_ * c_up);
+        if (eta_up > 0.0) {
+          grad.segment(k * nu_, nu_) += eta_up * drow;
+          if (eta_up > al_active_threshold_) {
+            hess.block(k * nu_, k * nu_, nu_, nu_) +=
+                al_rho_ * drow * drow.transpose();
+          }
+        }
+      }
+
+      // Lower bound: c_lo = lg_j - D_j u <= 0
+      const bool has_lower =
+          stage.lg.size() == m &&
+          (stage.lg_mask.size() != m || stage.lg_mask(j) != 0);
+      if (has_lower) {
+        const double c_lo = stage.lg(j) - Du(j);
+        const double eta_lo = std::max(0.0, al_nu_lower_[k](j) + al_rho_ * c_lo);
+        if (eta_lo > 0.0) {
+          grad.segment(k * nu_, nu_) += -eta_lo * drow;
+          if (eta_lo > al_active_threshold_) {
+            hess.block(k * nu_, k * nu_, nu_, nu_) +=
+                al_rho_ * drow * drow.transpose();
+          }
+        }
+      }
+    }
+  }
+}
+
+// ============================================================
+// B3 AL-full: outer-iteration multiplier update (classic AL pattern):
+//   ν^{t+1} = [ν^t + ρ c(u^t)]_+
+// Called after each inner PMP solve when al_outer_iters_ > 1. Persists
+// ν across MPC ticks for warm-start (it is a slow variable).
+// ============================================================
+void PMPOptimizer::updateALMultipliers() {
+  if (al_nu_upper_.size() != N_) return;  // never primed → no-op
+
+  for (size_t k = 0; k < N_; ++k) {
+    const auto& stage = ocp_[k];
+    if (stage.D.size() == 0) continue;
+
+    const int m = static_cast<int>(stage.D.rows());
+    if (al_nu_upper_[k].size() != m || al_nu_lower_[k].size() != m) continue;
+
+    const vector_t Du = stage.D * stages_[k].u;
+
+    for (int j = 0; j < m; ++j) {
+      if (stage.ug.size() == m &&
+          (stage.ug_mask.size() != m || stage.ug_mask(j) != 0)) {
+        const double c_up = Du(j) - stage.ug(j);
+        al_nu_upper_[k](j) =
+            std::max(0.0, al_nu_upper_[k](j) + al_rho_ * c_up);
+      }
+      if (stage.lg.size() == m &&
+          (stage.lg_mask.size() != m || stage.lg_mask(j) != 0)) {
+        const double c_lo = stage.lg(j) - Du(j);
+        al_nu_lower_[k](j) =
+            std::max(0.0, al_nu_lower_[k](j) + al_rho_ * c_lo);
+      }
+    }
+  }
 }
 
 void PMPOptimizer::projectConstraints() {
@@ -252,11 +381,39 @@ bool PMPOptimizer::solve(std::vector<OcpSolution>& solution_out) {
   // ⑤ 计算 Hessian
   matrix_t hess = computeHessian();
 
+  // B3 AL-full: inject augmented-Lagrangian gradient/Hessian penalty so the
+  // friction inequalities enter the Newton system. Multipliers are persisted
+  // across MPC ticks; the inner solve uses the current ν, then optionally
+  // updates ν via outer iteration (al_outer_iters_). Default flag off →
+  // grad/hess untouched and the legacy projection-only path is bit-similar.
+  if (use_augmented_lagrangian_) {
+    addAugmentedLagrangianPenalty(grad, hess);
+  }
+
   // ⑥ 超线性更新
   vector_t update = superlinearUpdate(grad, hess);
 
-  // ⑦ 更新控制量
+  // ⑦ 更新控制量 (projection retained as safety in AL mode by default)
   updateControl(update);
+
+  // B3 AL-full outer iterations: optional extra (gradient+penalty rebuild,
+  // solve, multiplier update) cycles inside this MPC tick. al_outer_iters_=1
+  // is the default; bigger values harden constraint feasibility per tick at
+  // the cost of solve time.
+  if (use_augmented_lagrangian_) {
+    updateALMultipliers();  // first multiplier bump after primary solve
+    for (int outer = 1; outer < al_outer_iters_; ++outer) {
+      forwardSimulate();
+      backwardCostate();
+      vector_t grad_outer = computeGradient();
+      if (!grad_outer.allFinite()) break;
+      matrix_t hess_outer = computeHessian();
+      addAugmentedLagrangianPenalty(grad_outer, hess_outer);
+      vector_t upd_outer = superlinearUpdate(grad_outer, hess_outer);
+      updateControl(upd_outer);
+      updateALMultipliers();
+    }
+  }
 
   // ⑧ 用更新后的 u 重新前向传播，保证 x 与 u 一致
   forwardSimulate();

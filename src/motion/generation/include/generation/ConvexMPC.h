@@ -97,6 +97,14 @@ private:
   int mlp_recursive_steps_ = -1;    // 全递归时生效：MLP 修正的步数，-1 = 全部 N 步
   double mlp_residual_clamp_ = 0.5;
 
+  // B3 AL-full (codex collapse-review verdict V2): augmented-Lagrangian
+  // friction-constrained PMP update. Default false → legacy path unchanged.
+  bool use_augmented_lagrangian_ = false;
+  double al_rho_ = 1.0e-2;
+  int al_outer_iters_ = 1;
+  bool al_final_projection_safety_ = true;
+  double al_active_threshold_ = 0.0;
+
   // 训练数据采集
   bool collect_training_data_ = false;
   int max_training_samples_ = 10000;   // 最多采集样本数

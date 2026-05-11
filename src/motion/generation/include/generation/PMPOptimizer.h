@@ -55,6 +55,16 @@ class PMPOptimizer {
   void setInitialState(const vector_t& x0);
   void setWarmStart(const std::vector<OcpSolution>& prev_solution);
   void setResidualCallback(ResidualFn fn);
+  // B3 AL-full (codex collapse-review verdict V2): augmented-Lagrangian
+  // gradient/Hessian penalty for the friction inequalities. Constraints
+  // enter the PMP Newton system through first- and second-order penalty
+  // terms while the post-solve projection is retained as hard-feasibility
+  // safety. Default flag off → legacy projection-only path unchanged.
+  void setUseAugmentedLagrangian(bool enable) { use_augmented_lagrangian_ = enable; }
+  void setALOptions(double rho,
+                    int outer_iters,
+                    bool final_projection_safety,
+                    double active_threshold);
   bool solve(std::vector<OcpSolution>& solution_out);
 
  private:
@@ -75,6 +85,15 @@ class PMPOptimizer {
   void updateControl(const vector_t& g);
   void projectConstraints();
 
+  // B3 AL-full helpers.
+  //   addAugmentedLagrangianPenalty: adds D^T η to grad and ρ D_A^T D_A to
+  //   the block-diagonal of hess for the current multipliers + active rows.
+  //   updateMultipliers: ν_k ← [ν_k + ρ c_k(u_k)]_+ after each PMP solve.
+  //   stageRowResidual: returns c_{k,j}(u_k) = D_{k,j} u_k - ug_{k,j} (or
+  //   lg-D, depending on row sign).
+  void addAugmentedLagrangianPenalty(vector_t& grad, matrix_t& hess);
+  void updateALMultipliers();
+
   std::vector<OcpStage> ocp_;
   std::vector<PMPStageData> stages_;
   vector_t x0_;
@@ -84,6 +103,18 @@ class PMPOptimizer {
   std::vector<vector_t> warm_u_;
 
   ResidualFn residual_fn_;
+
+  // B3 AL-full state. All zero/empty by default → legacy projection-only path
+  // unchanged (regression-safe).
+  bool use_augmented_lagrangian_ = false;
+  double al_rho_ = 1.0e-2;             // penalty strength
+  int al_outer_iters_ = 1;             // outer multiplier updates per solve()
+  bool al_final_projection_safety_ = true;
+  double al_active_threshold_ = 0.0;   // active if (c + ν/ρ) > threshold
+  // Lagrange multipliers per stage per constraint row. Persisted across
+  // ticks so warm-starting works (ν is a slow variable, not reset each tick).
+  std::vector<vector_t> al_nu_upper_;  // size N, each row count = D.rows()
+  std::vector<vector_t> al_nu_lower_;
 };
 
 } // namespace clear
