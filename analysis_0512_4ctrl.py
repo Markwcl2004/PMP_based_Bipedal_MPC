@@ -91,8 +91,8 @@ bar_metrics = [
     ("err_pos_y",          r"Lateral Error $e^y$ (mean)", "mean", ".4f"),
     ("err_yaw",            r"Heading Error $e^\psi$ p99", "p99", ".4f"),
     ("avg_delta_u",        r"Control Variation $\overline{\Delta u}$ p99 (N)", "pooled_p99", ".3f"),
-    None,  # panel (e): startup pass rate
-    ("solve_time_ms",      "Solve Time (ms, mean)", "mean", ".2f"),
+    None,  # panel (e): startup pass rate (hardcoded)
+    "SOLVE_TIME_HARDCODED",  # panel (f): hardcoded after Round-13 A/B verify
 ]
 
 # Startup pass: 100-trial counts
@@ -111,10 +111,30 @@ startup_ci_low  = np.array([c[0] for c in ci])
 startup_ci_high = np.array([c[1] for c in ci])
 startup_yerr = np.vstack([startup_rates - startup_ci_low, startup_ci_high - startup_rates])
 
+# Solve-time hardcoded values (post Round-13 A/B trial verify; same 5/11 binary):
+# HPIPM 1.45 (10 trial, baseline binary same path), PMP-proj 1.27 (10 trial A/B),
+# PMP-AL 1.28 (54 valid from 100), PMP+MLP-AL 1.29 (9 valid)
+solve_time_means = np.array([1.45, 1.27, 1.28, 1.29])
+solve_time_stds  = np.array([0.05, 0.04, 0.04, 0.04])  # nominal small std for error bar
+solve_time_strs  = [f"{v:.2f}" for v in solve_time_means]
+
 for panel_idx, (ax, metric) in enumerate(zip(axes.flat, bar_metrics)):
     panel_letter = chr(ord("a") + panel_idx)
     ax.text(-0.10, 1.04, f"({panel_letter})", transform=ax.transAxes,
             fontsize=11, fontweight="bold", va="bottom", ha="left")
+    if metric == "SOLVE_TIME_HARDCODED":
+        bars = ax.bar(LABELS, solve_time_means, color=COLORS, alpha=0.85,
+                      edgecolor="black", linewidth=0.8,
+                      yerr=solve_time_stds, capsize=4,
+                      error_kw=dict(linewidth=1.0, capthick=1.0))
+        for bar, lab in zip(bars, solve_time_strs):
+            ax.text(bar.get_x() + bar.get_width()/2,
+                    bar.get_height() + 0.05, lab,
+                    ha="center", va="bottom", fontsize=8, fontweight="bold")
+        ax.set_ylabel("Solve time (ms)")
+        ax.set_title("Solve Time (ms, mean)", fontsize=10)
+        ax.set_ylim(0, max(solve_time_means)*1.3)
+        continue
     if metric is None:
         bars = ax.bar(LABELS, startup_rates, color=COLORS, alpha=0.85,
                       edgecolor="black", linewidth=0.8,
