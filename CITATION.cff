@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite the paper below."
+title: "PMP_based_Bipedal_MPC"
+authors:
+  - family-names: Wang
+    given-names: Chunlin
+  - family-names: Lin
+    given-names: Zhiyun
+repository-code: "https://github.com/Markwcl2004/PMP_based_Bipedal_MPC"
+preferred-citation:
+  type: conference-paper
+  title: "Learning-Enhanced Pontryagin-Based MPC for Bipedal Robot Locomotion"
+  authors:
+    - family-names: Wang
+      given-names: Chunlin
+    - family-names: Lin
+      given-names: Zhiyun
+  collection-title: "2026 15th Asian Control Conference (ASCC)"
+  year: 2026
+  doi: "10.1109/ASCC70886.2026.11701800"

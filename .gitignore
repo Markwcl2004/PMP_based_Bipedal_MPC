@@ -21,3 +21,8 @@ eval/init_stability_100trial/*.log
 scripts/__pycache__/
 eval/
 MUJOCO_LOG.TXT
+
+# OS / editor
+.DS_Store
+# MLP training data collected by ConvexMPC
+mpc_data/
