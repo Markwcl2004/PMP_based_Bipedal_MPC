@@ -14,25 +14,7 @@ The centroidal MPC of a point-foot biped (LimX TRON1, `PF_A` model) is solved wi
 
 ## Results
 
-![Controller comparison](img/fixed_summary_6panel.png)
-
-Four controllers on the same walking task, 20 s per trial:
-
-| Controller | What it is |
-| --- | --- |
-| HPIPM | Original convex MPC with the HPIPM QP solver (upstream baseline) |
-| PMP-proj. | PMP solver, friction cone enforced by projection after each solve |
-| PMP-AL | PMP solver with an augmented-Lagrangian penalty on the friction constraints, projection kept as a safety step |
-| PMP+MLP-AL | PMP-AL plus the residual MLP |
-
-Read from the figure above:
-
-- Tracking error is about the same for HPIPM and both PMP variants (0.0562 / 0.0564 / 0.0568). Adding the MLP lowers it to 0.0543.
-- Mean lateral error drops from 0.0175 (HPIPM) to 0.0112 with the MLP, which is the straighter walking reported in the paper.
-- Mean solve time is 1.45 ms for HPIPM and 1.27 to 1.29 ms for the PMP variants.
-- Panel (e) counts how many of 100 fixed-initialization trials get through startup: 48 (HPIPM), 59, 54, and 99 (PMP+MLP-AL).
-
-The metric panels pool different numbers of runs per controller: 10 (HPIPM), 10 (PMP-proj.), 54 valid runs out of 100 (PMP-AL), and 9 valid runs out of 10 (PMP+MLP-AL). See the header of [`scripts/analysis/analysis_0512_4ctrl.py`](scripts/analysis/analysis_0512_4ctrl.py).
+In MuJoCo, over 100 matched trials of 20 s each, the PMP solver tracks about as well as the HPIPM baseline and runs in real time. The learning-enhanced variant lowers the mean tracking error further and clearly reduces the lateral position error, so the robot walks straighter, at negligible extra computation. See the paper for the numbers.
 
 ## What is new compared to the upstream code
 
