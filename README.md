@@ -14,7 +14,22 @@ The centroidal MPC of a point-foot biped (LimX TRON1, `PF_A` model) is solved wi
 
 ## Results
 
-In MuJoCo, over 100 matched trials of 20 s each, the PMP solver tracks about as well as the HPIPM baseline and runs in real time. The learning-enhanced variant lowers the mean tracking error further and clearly reduces the lateral position error, so the robot walks straighter, at negligible extra computation. See the paper for the numbers.
+Table I of the paper. MuJoCo, 100 Hz MPC (N = 25, Δt = 0.02 s), LKF state estimation, 500 Hz whole-body control. Each controller runs 100 matched trials of 20 s with identical perturbation seeds. A startup pass requires the peak error in the first second to stay below a fixed failure threshold; the tracking metrics are computed over the strict-valid 20 s runs.
+
+| Metric | HPIPM | PMP-proj. | PMP+AL+MLP+proj | vs HPIPM |
+| --- | --- | --- | --- | --- |
+| ē mean | 0.0564 | 0.0564 | 0.0540 | −4.3% |
+| ē p99 | 0.0991 | 0.1007 | 0.0916 | −7.6% |
+| e∞ mean | 0.596 | 0.594 | 0.572 | −4.0% |
+| e∞ p99 | 1.41 | 1.36 | 1.17 | −17.0% |
+| e<sup>y</sup> mean | 0.0175 | 0.0175 | 0.0132 | −24.6% |
+| e<sup>y</sup> p95 | 0.0325 | 0.0323 | 0.0239 | −26.5% |
+| e<sup>ψ</sup> p99 | 0.0624 | 0.0609 | 0.0513 | −17.8% |
+| Δu p99 (N) | 6.72 | 6.56 | 6.12 | −8.9% |
+| Solve time (ms) | 0.75 | 1.38 | 1.41 | — |
+| Startup pass | 48/100 | 43/100 | 54/100 | — |
+
+ē is the mean state tracking error over the horizon, e∞ the peak error, e<sup>y</sup> the lateral position error, e<sup>ψ</sup> the heading error and Δu the control variation; definitions are in Sec. V-B of the paper. HPIPM solves fastest, and all controllers stay within the 10 ms MPC budget. The startup-pass 95% Wilson intervals of HPIPM and the learning-enhanced controller overlap (48/100: [38.4, 57.7]%; 54/100: [44.2, 63.4]%), so the paper reads this as non-inferiority, not as a robustness gain.
 
 ## What is new compared to the upstream code
 
@@ -26,8 +41,8 @@ This repository started from [clearlab-sustech/Bipedal_MPC](https://github.com/c
 | PMP wired into the MPC, residual MLP correction (single-step or recursive over the first steps of the horizon), training-data collection, per-trial evaluation logging | [`src/motion/generation/src/ConvexMPC.cc`](src/motion/generation/src/ConvexMPC.cc) |
 | MLP inference in C++ (weights loaded from a text file) | [`src/motion/estimation/src/MLPNetwork.cc`](src/motion/estimation/src/MLPNetwork.cc) |
 | MLP training with DAgger-style data rounds and noise augmentation | [`scripts/train_mlp_v3.py`](scripts/train_mlp_v3.py) |
-| Trained residual model used in the paper (18 inputs, hidden 64 and 32, 12 outputs, ReLU) | [`models/mlp_v1_mse.yaml`](models/mlp_v1_mse.yaml), [`models/mlp_v1_mse.txt`](models/mlp_v1_mse.txt) |
-| Evaluation logs and figure scripts | [`eval/`](eval), [`img/`](img), [`scripts/analysis/`](scripts/analysis) |
+| MSE-trained residual model (18 inputs, hidden 64 and 32, 12 outputs, ReLU) | [`models/mlp_v1_mse.yaml`](models/mlp_v1_mse.yaml), [`models/mlp_v1_mse.txt`](models/mlp_v1_mse.txt) |
+| Batch runner for the startup-pass trials | [`scripts/run_init_stability_trials.py`](scripts/run_init_stability_trials.py) |
 
 ## Repository layout
 
@@ -44,9 +59,7 @@ src/
   sim/               MuJoCo simulation node
   third_parties/     pinocchio interface, eiquadprog, HPIPM/BLASFEO, MuJoCo binaries
 models/              trained residual MLP
-scripts/             MLP training, figure and trial scripts
-eval/                per-trial CSV logs
-img/                 figures
+scripts/             MLP training and trial runner
 ```
 
 ## Build
@@ -89,6 +102,8 @@ The controller reads [`src/assets/p1/config.yaml`](src/assets/p1/config.yaml). T
 | `mlp_residual_clamp` | clamp on the predicted residual |
 | `collect_training_data`, `max_training_samples` | log (state, input, next state) samples as CSV for MLP training |
 
+The paper evaluates with LKF state estimation. Set `estimation.use_odom: false` for that; `true` feeds the simulator's ground-truth odometry to the estimator.
+
 ## Training the residual MLP
 
 1. Set `collect_training_data: true` and `use_mlp_residual: false`, then walk the robot. Samples are written as `mlp_training_data_*.csv` to the directory hard-coded in `ConvexMPC.cc` (search for `mlp_training_data_`).
@@ -103,7 +118,7 @@ The controller reads [`src/assets/p1/config.yaml`](src/assets/p1/config.yaml). T
 
 - Simulation only. No hardware experiments.
 - The HPIPM baseline in the comparison was run with the upstream repository. In this code base `ConvexMPC` always calls the PMP optimizer.
-- Some paths are still hard-coded to the original machine: `mlp_config` in `config.yaml`, the evaluation log and training-data directories in `ConvexMPC.cc`, and the input/output paths in `scripts/analysis/*.py`, which also expect logs from three separate workspaces (HPIPM, PMP only, PMP+MLP). Adjust them before running.
+- Some paths are still hard-coded to the original machine: `mlp_config` in `config.yaml`, the evaluation log and training-data directories in `ConvexMPC.cc`, and the workspace paths in `scripts/run_init_stability_trials.py`. Adjust them before running.
 
 ## Citation
 
